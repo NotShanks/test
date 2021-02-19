@@ -1,3 +1,10 @@
+local vu = game:GetService("VirtualUser")
+game:GetService("Players").LocalPlayer.Idled:connect(function()
+vu:Button2Down(Vector2.new(0,0),workspace.CurrentCamera.CFrame)
+wait(1)
+vu:Button2Up(Vector2.new(0,0),workspace.CurrentCamera.CFrame)
+end)
+
 local library = loadstring(game:HttpGet("https://pastebin.com/raw/AtQAJECZ", true))()
 local w = library:CreateWindow('Gay Physics')
 w:Section('Top')
@@ -8,7 +15,6 @@ while wait() do
 end
 end)
 
-w:Section('Middle')
 local b2 = w:Button("Inf Ammo", function()
     for i,v in pairs(game:GetService("Players").LocalPlayer.Backpack:GetChildren()) do
         if v.Name == "m1911" then game:GetService("Players").LocalPlayer.Backpack.m1911.Settings.StoredAmmo.Value = 9999
@@ -24,6 +30,11 @@ local b2 = w:Button("Inf Ammo", function()
     end
 end)
 
+w:Section('Middle')
+local b11 = w:Button("ArmorMachine", function()
+    fireclickdetector(game:GetService("Workspace").ArmorMachine.ClickDetector)
+end)
+
 w:Section("Machines")
 local b6 = w:Button("ATM", function()
     fireclickdetector(game:GetService("Workspace").ATM.ClickDetector)
@@ -35,10 +46,6 @@ end)
 
 local b10 = w:Button("BuyMachine", function()
     fireclickdetector(game:GetService("Workspace").VendingMachine.ClickDetector)
-end)
-
-local b11 = w:Button("ArmorMachine", function()
-    fireclickdetector(game:GetService("Workspace").ArmorMachine.ClickDetector)
 end)
 
 local b8 = w:Button("SellMachine", function()
