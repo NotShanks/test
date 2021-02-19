@@ -10,7 +10,7 @@ local w = library:CreateWindow('Gay Physics')
 w:Section('Top')
 
 local b1 = w:Button("Inf Stamina", function()
-while wait() do
+while true do wait()
     game:GetService("Players").LocalPlayer.PlayerGui.control.sprint.LocalScript.stamina.Value = 99
 end
 end)
