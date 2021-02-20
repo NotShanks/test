@@ -5,7 +5,7 @@ wait(1)
 vu:Button2Up(Vector2.new(0,0),workspace.CurrentCamera.CFrame)
 end)
 
-local library = loadstring(game:HttpGet("https://pastebin.com/raw/AtQAJECZ", true))()
+local library = loadstring(game:HttpGet("https://raw.githubusercontent.com/NotShanks/test/master/UiLib.lua", true))()
 local w = library:CreateWindow('Gay Physics')
 w:Section('Top')
 
