@@ -5,7 +5,7 @@ wait(1)
 vu:Button2Up(Vector2.new(0,0),workspace.CurrentCamera.CFrame)
 end)
 
-local library = loadstring(game:HttpGet("https://raw.githubusercontent.com/NotShanks/test/master/UiLib.lua", true))()
+local library = loadstring(game:HttpGet("https://pastebin.com/raw/AtQAJECZ", true))()
 local w = library:CreateWindow('Gay Physics')
 w:Section('Top')
 
@@ -62,8 +62,6 @@ local b1 = w:Button("Get All Items", function()
 end
 end)
 
-local b12 = w:Button("Rejoin", function()
-    local ts = game:GetService("TeleportService")
-    local p = game:GetService("Players").LocalPlayer
-    ts:Teleport(game.PlaceId, p)
+local b12 = w:Button("Reset", function()
+    game:GetService("Players").LocalPlayer.Character.Humanoid.Health = 0
 end)
