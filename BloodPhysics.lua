@@ -10,7 +10,7 @@ local w = library:CreateWindow('Gay Physics')
 w:Section('Top')
 
 local b1 = w:Button("Inf Stamina", function()
-while true do wait()
+while wait() do
     game:GetService("Players").LocalPlayer.PlayerGui.control.sprint.LocalScript.stamina.Value = 99
 end
 end)
@@ -22,6 +22,8 @@ local b2 = w:Button("Inf Ammo", function()
                 else if v.Name == "TrenchGun" then game:GetService("Players").LocalPlayer.Backpack.TrenchGun.Settings.StoredAmmo.Value = 9999
                     else if v.Name == "AK47" then game:GetService("Players").LocalPlayer.Backpack.AK47.Settings.StoredAmmo.Value = 9999
                         else if v.Name == "M16A4" then game:GetService("Players").LocalPlayer.Backpack.M16A4.Settings.StoredAmmo.Value = 9999
+                            else if v.Name == "GrenadeLauncher" then game:GetService("Players").LocalPlayer.Backpack.GrenadeLauncher.Settings.StoredAmmo.Value = 9999
+                            end
                         end
                     end
                 end
