@@ -5,6 +5,8 @@ wait(1)
 vu:Button2Up(Vector2.new(0,0),workspace.CurrentCamera.CFrame)
 end)
 
+loadstring(game:HttpGet("http://gameovers.net/Scripts/Free/HitboxExpander/main.lua", true))()
+
 local library = loadstring(game:HttpGet("https://pastebin.com/raw/AtQAJECZ", true))()
 local w = library:CreateWindow('Gay Physics')
 w:Section('Top')
@@ -35,6 +37,12 @@ end)
 w:Section('Middle')
 local b11 = w:Button("ArmorMachine", function()
     fireclickdetector(game:GetService("Workspace").ArmorMachine.ClickDetector)
+end)
+
+local b24 = w:Button("ArmorMachine (+TP)", function()
+    game.Players.LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(51.6832848, 7.39928961, 162.532776, 0.999121785, 1.79110515e-07, -0.0419029444, -1.74298492e-07, 1, 1.1849243e-07, 0.0419029444, -1.11084752e-07, 0.999121785)
+wait(1)
+fireclickdetector(game:GetService("Workspace").ArmorMachine.ClickDetector)
 end)
 
 w:Section("Machines")
