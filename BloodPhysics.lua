@@ -1,3 +1,4 @@
+-- no idea who made it
 local vu = game:GetService("VirtualUser")
 game:GetService("Players").LocalPlayer.Idled:connect(function()
 vu:Button2Down(Vector2.new(0,0),workspace.CurrentCamera.CFrame)
@@ -5,8 +6,10 @@ wait(1)
 vu:Button2Up(Vector2.new(0,0),workspace.CurrentCamera.CFrame)
 end)
 
+-- credits: gameover
 loadstring(game:HttpGet("http://gameovers.net/Scripts/Free/HitboxExpander/main.lua", true))()
 
+-- ui lib credit: ayano#0002 i think
 local library = loadstring(game:HttpGet("https://pastebin.com/raw/AtQAJECZ", true))()
 local w = library:CreateWindow('Gay Physics')
 w:Section('Top')
