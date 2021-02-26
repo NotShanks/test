@@ -12,7 +12,7 @@ loadstring(game:HttpGet("http://gameovers.net/Scripts/Free/HitboxExpander/main.l
 -- ui lib credit: ayano#0002 i think
 local library = loadstring(game:HttpGet("https://pastebin.com/raw/AtQAJECZ", true))()
 local w = library:CreateWindow('Gay Physics')
-w:Section('Top')
+w:Section('Combat')
 
 local b1 = w:Button("Inf Stamina", function()
 while wait() do
@@ -35,6 +35,26 @@ local b2 = w:Button("Inf Ammo", function()
             end
         end
     end
+end)
+
+local b24 = w:Button("Crit. Hit", function()
+local boy = getrawmetatable(game)
+
+local kill = boy.__namecall
+setreadonly(boy, false)
+boy.__namecall = newcclosure(function(dead, ...)
+  args = {...}
+  if tostring(dead) == "hit" then
+      if args[1] ~= nil and args[1].Parent ~= nil then
+          args[1] = args[1].Parent.Head
+          args[1] = args[1].Parent.Neck
+          args[1] = args[1].Parent["Left Arm"]
+          args[1] = args[1].Parent["Right Arm"]
+          print(args[1])
+      end
+  end
+  return kill(dead, unpack(args))
+end)    
 end)
 
 w:Section('Middle')
