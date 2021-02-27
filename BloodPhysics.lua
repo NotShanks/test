@@ -46,8 +46,8 @@ boy.__namecall = newcclosure(function(dead, ...)
   args = {...}
   if tostring(dead) == "hit" then
       if args[1] ~= nil and args[1].Parent ~= nil then
-          args[1] = args[1].Parent.Head
           args[1] = args[1].Parent.Neck
+          args[1] = args[1].Parent.Head
           args[1] = args[1].Parent["Left Arm"]
           args[1] = args[1].Parent["Right Arm"]
           print(args[1])
