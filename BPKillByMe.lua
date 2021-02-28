@@ -1,14 +1,14 @@
---Made my me
--- Gui to Lua
--- Version: 3.2
-
--- Instances:
-
+--made by me
+if (game.CoreGui.ScreenGui) then
+    game.CoreGui.ScreenGui:Destroy()
+    else return
+end
 local ScreenGui = Instance.new("ScreenGui")
 local Frame = Instance.new("Frame")
 local Kill = Instance.new("TextButton")
 local TextBox = Instance.new("TextBox")
 local TextLabel = Instance.new("TextLabel")
+
 
 --Properties:
 
@@ -33,11 +33,11 @@ Kill.TextColor3 = Color3.fromRGB(0, 0, 0)
 Kill.TextSize = 14.000
 Kill.MouseButton1Click:connect(function()
 local args = {
-    [1] = game:GetService("Players")[PlayerName.Text].Character.Humanoid,
+    [1] = game:GetService("Players")[TextBox.Text].Character.Humanoid,
     [2] = 100,
-    [3] = game:GetService("Players")[PlayerName.Text].Character.Head,
+    [3] = game:GetService("Players")[TextBox.Text].Character.Head,
     [4] = true,
-    [5] = game:GetService("Players")[PlayerName.Text].Character.Torso,
+    [5] = game:GetService("Players")[TextBox.Text].Character.Torso,
     [6] = false,
     [7] = game:GetService("Players").LocalPlayer.Character.Katana.CustomStomp.HitSound,
     [8] = 1,
