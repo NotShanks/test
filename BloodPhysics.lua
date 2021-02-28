@@ -37,7 +37,7 @@ local b2 = w:Button("Inf Ammo", function()
     end
 end)
 
-local b24 = w:Button("Crit. Hit", function()
+local b24 = w:Button("Crit. Hit??", function()
 local boy = getrawmetatable(game)
 
 local kill = boy.__namecall
