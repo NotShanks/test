@@ -80,7 +80,7 @@ local args = {
     [5] = game:GetService("Players")[PlayerName.Text].Character.Torso,
     [6] = false,
     [7] = game:GetService("Players").LocalPlayer.Character.Katana.CustomStomp.HitSound,
-    [8] = 2,
+    [8] = 1,
     [9] = game:GetService("Players").LocalPlayer.Character.Katana,
     [10] = false
 }
