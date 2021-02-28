@@ -1,8 +1,4 @@
---made by me
-if (game.CoreGui.ScreenGui) then
-    game.CoreGui.ScreenGui:Destroy()
-    else return
-end
+
 local ScreenGui = Instance.new("ScreenGui")
 local Frame = Instance.new("Frame")
 local Kill = Instance.new("TextButton")
