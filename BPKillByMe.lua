@@ -1,4 +1,3 @@
-
 local ScreenGui = Instance.new("ScreenGui")
 local Frame = Instance.new("Frame")
 local Kill = Instance.new("TextButton")
