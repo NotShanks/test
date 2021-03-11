@@ -1,3 +1,4 @@
+local player = game:GetService("Players").LocalPlayer
 local plat = Instance.new("Part")
 plat.Anchored = true
 plat.Parent = workspace
