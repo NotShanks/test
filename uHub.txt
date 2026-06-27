@@ -1335,9 +1335,20 @@ function Luna:CreateWindow(WindowSettings)
 			if srv:FindFirstChild("MaxPlayers") then srv.MaxPlayers.Visible = false end
 			if srv:FindFirstChild("Latency") then srv.Latency.Visible = false end
 			if srv:FindFirstChild("Region") then srv.Region.Visible = false end
+			if srv:FindFirstChild("Join") then srv.Join.Visible = false end -- Hides the Join Script card
+			
 			if srv:FindFirstChild("Players") then
-				configureCard(srv.Players, "Season Timer", "Active weather duration", nil, nil)
+				configureCard(srv.Players, "Season Timer", "", nil, nil)
 				srv.Players.Visible = true
+				pcall(function()
+					-- Increases the card width and text size for readability
+					srv.Players.Size = UDim2.new(1, -10, 0, 80) 
+					if srv.Players:FindFirstChild("Title") then srv.Players.Title.TextSize = 18 end
+					if srv.Players:FindFirstChild("Value") then 
+						srv.Players.Value.TextSize = 24
+						srv.Players.Value.Position = UDim2.new(0, 15, 0.5, 0)
+					end
+				end)
 			end
 			if srv:FindFirstChild("Time") then
 				configureCard(srv.Time, "In Server For", "Session duration", nil, nil)
@@ -1349,6 +1360,9 @@ function Luna:CreateWindow(WindowSettings)
 			local fnd = db.Friends
 			configureCard(fnd, "Active Gates", "Currently discovered portals", nil, nil)
 			fnd.Visible = true
+			pcall(function()
+				fnd.Size = UDim2.new(0, 250, 0, 250) -- Extends the Active Gates container upwards/downwards
+			end)
 		end
 
 		if db:FindFirstChild("Discord") then
@@ -1385,8 +1399,20 @@ function Luna:CreateWindow(WindowSettings)
 					local gateName = validGates[i]
 					if gateName then
 						card.Visible = true
-						configureCard(card, "Gate " .. i, "Active portal target", nil, nil)
-						card.Value.Text = gateName
+						-- Maps the Gate's actual name to the Title text and hides the small grey text
+						configureCard(card, gateName, "", nil, nil)
+						pcall(function()
+							if card:FindFirstChild("Value") then 
+								card.Value.Text = "" 
+								card.Value.Visible = false
+							end
+							if card:FindFirstChild("Title") then
+								card.Title.TextScaled = false 
+								card.Title.TextSize = 14
+								card.Title.TextWrapped = true
+								card.Title.Size = UDim2.new(1, -10, 1, 0)
+							end
+						end)
 					else
 						card.Visible = false
 					end
@@ -3361,11 +3387,12 @@ local secTweenGates = tabMain:CreateSection("Secure Gates Teleporter Navigation"
 secTweenGates:CreateToggle({
 	Name = "Enable Safe Tween Checks",
 	Description = "Requires activation prior to using Overworld Gate/Spawn teleports.",
-	CurrentValue = false,
+	CurrentValue = true, -- Changed to true by default
 	Callback = function(val)
 		_G.EnableTweeningSafety = val
 	end
 })
+_G.EnableTweeningSafety = true -- Ensures the variable is set immediately
 
 local rawGateList, gateRefs = getGates()
 local selectedGate = rawGateList[1]
@@ -3535,6 +3562,28 @@ secRuinsCore:CreateToggle({
 			SlingshotKill("Statue", "SlingshotStatue")
 		else
 			resetWalkSpeed()
+		end
+	end
+})
+
+secRuinsCore:CreateButton({
+	Name = "Teleport to ExitGate",
+	Description = "Finds and teleports to the nearest ExitGate.",
+	Callback = function()
+		local targetGate = nil
+		for _, obj in pairs(workspace:GetDescendants()) do
+			if obj.Name == "ExitGate" then
+				targetGate = obj
+				break
+			end
+		end
+		
+		if targetGate then
+			local pos = targetGate:IsA("Model") and targetGate:GetPivot().Position or targetGate.Position
+			doSmartTween(pos) -- Uses your built-in safe tweening function
+			Luna:Notification({Title = "Kings Ruins", Content = "Teleporting to ExitGate...", Icon = "check_circle_outline"})
+		else
+			Luna:Notification({Title = "Kings Ruins", Content = "No ExitGate found in workspace.", Icon = "warning"})
 		end
 	end
 })
@@ -3793,8 +3842,8 @@ secMiscCore:CreateToggle({
 secMiscCore:CreateDropdown({
 	Name = "Set FPS Cap",
 	Description = "Lock the frame render limits.",
-	Options = {"None", "15", "25", "35", "45", "60", "144", "240"},
-	CurrentOption = {"None"},
+	Options = {"None", "15", "25", "35", "45"},
+	CurrentOption = {"15"}, -- Changed default to 15
 	Callback = function(val)
 		if val == "None" then return end
 		if setfpscap then
@@ -3803,6 +3852,7 @@ secMiscCore:CreateDropdown({
 		end
 	end
 })
+if setfpscap then setfpscap(15) end -- Applies the 15 FPS cap on load
 
 secMiscCore:CreateButton({
 	Name = "Execute Infinite Yield",
@@ -3863,7 +3913,6 @@ if queue_on_teleport then
             TeleportCheck = true
             
             queue_on_teleport([[
-                -- This code runs inside the NEW game instance after you teleport
                 if not game:IsLoaded() then
                     game.Loaded:Wait()
                 end
