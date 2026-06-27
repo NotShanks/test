@@ -3308,6 +3308,7 @@ local Window = Luna:CreateWindow({
 })
 
 local gateDropdown, spawnDropdown, markerDropdown
+local gateRefs, spawnRefs, markerRefs -- Declare these here so the refresh function can actually update them!
 
 local function RefreshGatesAndSpawns()
 	pcall(function()
@@ -3326,28 +3327,45 @@ local function RefreshGatesAndSpawns()
 	end)
 end
 
+local currentMarkerList = {"None"} -- Added this to track the list globally
+
 local function refreshMarkersList()
-    local projFolder = workspace:FindFirstChild("Projectiles")
-    local newList = {}
-    local trackedNames = {}
-    if projFolder then
-        for _, proj in pairs(projFolder:GetChildren()) do
-            if string.find(proj.Name, "Marker") and not trackedNames[proj.Name] then
-                local markerPart = proj:FindFirstChild("Marker")
-                if markerPart and markerPart:IsA("BasePart") then
-                    local bg = markerPart:FindFirstChildOfClass("BillboardGui") or markerPart:FindFirstChild("BillboardGui")
-                    if bg and bg.Enabled then
-                        trackedNames[proj.Name] = true
-                        table.insert(newList, proj.Name)
-                    end
-                end
-            end
-        end
-    end
-    if #newList == 0 then table.insert(newList, "None") end
-    if markerDropdown then
-        markerDropdown:Set({Options = newList})
-    end
+	local projFolder = workspace:FindFirstChild("Projectiles")
+	local newList = {}
+	local trackedNames = {}
+	if projFolder then
+		for _, proj in pairs(projFolder:GetChildren()) do
+			if string.find(proj.Name, "Marker") and not trackedNames[proj.Name] then
+				local markerPart = proj:FindFirstChild("Marker")
+				if markerPart and markerPart:IsA("BasePart") then
+					local bg = markerPart:FindFirstChildOfClass("BillboardGui") or markerPart:FindFirstChild("BillboardGui")
+					if bg and bg.Enabled then
+						trackedNames[proj.Name] = true
+						table.insert(newList, proj.Name)
+					end
+				end
+			end
+		end
+	end
+	
+	if #newList == 0 then 
+		table.insert(newList, "None") 
+	else
+		-- Sort alphabetically so Marker1 comes before Marker2
+		table.sort(newList)
+	end
+	
+	currentMarkerList = newList
+	
+	-- Auto-select the lowest marker if current selection is invalid or "None"
+	if not table.find(newList, _G.SelectedMarker) or _G.SelectedMarker == "None" then
+		_G.SelectedMarker = newList[1]
+	end
+
+	if markerDropdown then
+		-- Update the options AND force the UI to display the newly selected marker
+		markerDropdown:Set({Options = newList, CurrentOption = {_G.SelectedMarker}})
+	end
 end
 
 local gatesFolder = workspace:FindFirstChild("Gates")
@@ -3428,7 +3446,8 @@ secTweenGates:CreateToggle({
 })
 _G.EnableTweeningSafety = true -- Ensures the variable is set immediately
 
-local rawGateList, gateRefs = getGates()
+local rawGateList
+rawGateList, gateRefs = getGates() -- Removed "local" from gateRefs
 local selectedGate = rawGateList[1]
 
 gateDropdown = secTweenGates:CreateDropdown({
@@ -3502,7 +3521,8 @@ secTweenGates:CreateButton({
 	end
 })
 
-local rawSpawnList, spawnRefs = getSpawns()
+local rawSpawnList
+rawSpawnList, spawnRefs = getSpawns() -- Removed "local" from spawnRefs
 local selectedSpawn = rawSpawnList[1]
 
 spawnDropdown = secTweenGates:CreateDropdown({
@@ -3692,14 +3712,25 @@ secMarkers:CreateButton({
 	Name = "Teleport To Selected",
 	Description = "Tween to active marker coordinates smoothly.",
 	Callback = function()
-		if _G.SelectedMarker == "None" or _G.SelectedMarker == "" then return end
+		if _G.SelectedMarker == "None" or _G.SelectedMarker == "" or not _G.SelectedMarker then return end
 		local projFolder = workspace:FindFirstChild("Projectiles")
 		if projFolder then
 			local targetProj = projFolder:FindFirstChild(_G.SelectedMarker)
 			if targetProj then
 				local markerPart = targetProj:FindFirstChild("Marker")
 				if markerPart and markerPart:IsA("BasePart") then
+					-- Tween to the marker
 					SmoothTween(markerPart.CFrame * CFrame.new(0, 3, 0), 150, function() return true end)
+					
+					-- Auto-select the next marker in the list after teleporting!
+					local currentIndex = table.find(currentMarkerList, _G.SelectedMarker)
+					if currentIndex and currentIndex < #currentMarkerList then
+						local nextMarker = currentMarkerList[currentIndex + 1]
+						_G.SelectedMarker = nextMarker
+						if markerDropdown then
+							markerDropdown:Set({Options = currentMarkerList, CurrentOption = {nextMarker}})
+						end
+					end
 				end
 			end
 		end
