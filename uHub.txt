@@ -358,9 +358,28 @@ local function getGates()
 			if gateModel:IsA("Model") then
 				local levelObj = gateModel:FindFirstChild("Level", true)
 				local rankObj = gateModel:FindFirstChild("Rank", true)
+				
+				-- [NEW] Timer Calculation
+				local timeLeftStr = ""
+				local timeSpawnedObj = gateModel:FindFirstChild("TimeSpawned")
+				
+				if timeSpawnedObj then
+					local spawnTime = tonumber(timeSpawnedObj.Value)
+					if spawnTime then
+						local remaining = 550 - (os.time() - spawnTime)
+						if remaining > 0 then
+							local mins = math.floor(remaining / 60)
+							local secs = remaining % 60
+							timeLeftStr = string.format(" | %02d:%02d", mins, secs)
+						else
+							timeLeftStr = " | Expired"
+						end
+					end
+				end
+
 				local lvl = levelObj and tostring(levelObj.Value) or "?"
 				local rnk = rankObj and tostring(rankObj.Value) or "?"
-				local name = string.format("%s [Lvl %s | Rank %s]", gateModel.Name, lvl, rnk)
+				local name = string.format("%s [Lvl %s | Rank %s]%s", gateModel.Name, lvl, rnk, timeLeftStr)
 				
 				table.insert(list, name)
 				refs[name] = gateModel
@@ -1414,21 +1433,48 @@ function Luna:CreateWindow(WindowSettings)
 			
 			for i, card in ipairs(cards) do
 				if card then
-					local gateName = validGates[i]
-					if gateName then
+					local gateString = validGates[i]
+					if gateString then
 						card.Visible = true
-						-- Maps the Gate's actual name to the Title text and hides the small grey text
-						configureCard(card, gateName, "", nil, nil)
+						
+						-- Split the string to separate the gate name and the timer
+						local parts = string.split(gateString, "] | ")
+						local baseName = parts[1]
+						local timerStr = parts[2]
+						
+						if timerStr then
+							baseName = baseName .. "]" -- Re-add the closing bracket we split off of
+						else
+							baseName = gateString -- Fallback if there's no timer
+							timerStr = ""
+						end
+
+						-- Assign the base name to the card
+						configureCard(card, baseName, "", nil, nil)
+						
 						pcall(function()
+							-- Format and place the Timer at the top empty space
 							if card:FindFirstChild("Value") then 
-								card.Value.Text = "" 
-								card.Value.Visible = false
+								if timerStr ~= "" then
+									card.Value.Text = "⏳ " .. timerStr 
+									card.Value.Visible = true
+									card.Value.TextSize = 15
+									card.Value.Position = UDim2.new(0, 0, 0, 8)
+									card.Value.Size = UDim2.new(1, 0, 0, 20)
+									card.Value.TextXAlignment = Enum.TextXAlignment.Center
+								else
+									card.Value.Visible = false
+								end
 							end
+							
+							-- Format and push the Title down so it sits under the Timer
 							if card:FindFirstChild("Title") then
 								card.Title.TextScaled = false 
-								card.Title.TextSize = 14
+								card.Title.TextSize = 13
 								card.Title.TextWrapped = true
-								card.Title.Size = UDim2.new(1, -10, 1, 0)
+								card.Title.Position = UDim2.new(0, 5, 0, 30)
+								card.Title.Size = UDim2.new(1, -10, 1, -30)
+								card.Title.TextYAlignment = Enum.TextYAlignment.Center
 							end
 						end)
 					else
