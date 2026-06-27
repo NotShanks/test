@@ -40,6 +40,12 @@ _G.AutoTreasure = false
 _G.EnableTweeningSafety = false 
 _G.SavedOriginalPosition = nil
 
+-- Sea World
+_G.AutoAmbrosia = false
+_G.AutoIchor = false
+_G.AutoAetheric = false
+_G.CursedFinger = false
+
 local clickConnectionBegan, clickConnectionEnded, clickRunService
 local gatesClickConnectionBegan, gatesClickConnectionEnded, gatesClickRunService
 local specConnectionBegan, specConnectionEnded, specRunService
@@ -418,6 +424,19 @@ local function countChests()
 	if chestsFolder then
 		for _, v in pairs(chestsFolder:GetChildren()) do
 			if v.Name == "TreasureChest" or v.Name == "SmallChest" then
+				count = count + 1
+			end
+		end
+	end
+	return count
+end
+
+local function countFingers()
+	local count = 0
+	local dropsFolder = workspace:FindFirstChild("Drops")
+	if dropsFolder then
+		for _, v in pairs(dropsFolder:GetChildren()) do
+			if v.Name == "CursedFinger" and v:IsA("Model") then
 				count = count + 1
 			end
 		end
@@ -3781,6 +3800,170 @@ secCombatGates:CreateToggle({
 	end
 })
 
+-- ==========================================
+-- 3.5. TAB: SEA
+-- ==========================================
+local tabSea = Window:CreateTab({
+	Name = "Sea",
+	Icon = "anchor", -- Utilizing the built-in anchor icon
+	ImageSource = "Material",
+	ShowTitle = true
+})
+
+local secSeaStats = tabSea:CreateSection("Environmental Tracking Counters")
+
+local lblFingers = secSeaStats:CreateLabel({
+	Text = "Cursed Fingers: 0",
+	Style = 2
+})
+
+task.spawn(function()
+	while task.wait(0.5) do
+		pcall(function()
+			lblFingers:Set("Cursed Fingers: " .. tostring(countFingers()))
+		end)
+	end
+end)
+
+local secSeaConsumables = tabSea:CreateSection("Auto Consumables")
+
+secSeaConsumables:CreateToggle({
+	Name = "Auto Ambrosia",
+	Description = "Spam Ambrosia remote every 1 second.",
+	CurrentValue = false,
+	Callback = function(val)
+		_G.AutoAmbrosia = val
+		if val then
+			task.spawn(function()
+				while _G.AutoAmbrosia do
+					pcall(function()
+						game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("Ambrosia"):FireServer()
+					end)
+					task.wait(1)
+				end
+			end)
+		end
+	end
+})
+
+secSeaConsumables:CreateToggle({
+	Name = "Auto Ichor Chalice",
+	Description = "Spam Ichor Chalice remote every 1 second.",
+	CurrentValue = false,
+	Callback = function(val)
+		_G.AutoIchor = val
+		if val then
+			task.spawn(function()
+				while _G.AutoIchor do
+					pcall(function()
+						game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("IchorChalice"):FireServer()
+					end)
+					task.wait(1)
+				end
+			end)
+		end
+	end
+})
+
+secSeaConsumables:CreateToggle({
+	Name = "Auto Aetheric Extract",
+	Description = "Spam Aetheric Extract remote every 1 second.",
+	CurrentValue = false,
+	Callback = function(val)
+		_G.AutoAetheric = val
+		if val then
+			task.spawn(function()
+				while _G.AutoAetheric do
+					pcall(function()
+						game:GetService("ReplicatedStorage"):WaitForChild("Remotes"):WaitForChild("AethericExtract"):FireServer()
+					end)
+					task.wait(1)
+				end
+			end)
+		end
+	end
+})
+
+local secSeaFarms = tabSea:CreateSection("Sea Farming Automation")
+
+local savedSeaPosition = nil
+
+local function collectFinger(model)
+	local character = Player.Character
+	if not character or not character:FindFirstChild("HumanoidRootPart") then return end
+	
+	local hrp = character.HumanoidRootPart
+	local touchedPart = model:FindFirstChild("Touched")
+	
+	if touchedPart then
+		firetouchinterest(hrp, touchedPart, 0)
+		task.wait()
+		firetouchinterest(hrp, touchedPart, 1)
+	else
+		local originalCFrame = character:GetPivot() 
+		local maxRetries = 3
+		local currentRetry = 0
+		
+		while currentRetry < maxRetries and not touchedPart and _G.CursedFinger do
+			character:PivotTo(model:GetPivot())
+			task.wait(0.3) 
+			
+			touchedPart = model:FindFirstChild("Touched")
+			if touchedPart then
+				firetouchinterest(hrp, touchedPart, 0)
+				task.wait()
+				firetouchinterest(hrp, touchedPart, 1)
+				break
+			end
+			
+			currentRetry = currentRetry + 1
+		end
+		
+		character:PivotTo(originalCFrame)
+		task.wait(0.2) 
+	end
+end
+
+secSeaFarms:CreateToggle({
+	Name = "Auto Collect Cursed Fingers",
+	Description = "Automatically teleport to and collect Cursed Fingers.",
+	CurrentValue = false,
+	Callback = function(val)
+		_G.CursedFinger = val
+		local character = Player.Character
+		
+		if val then
+			-- Save the initial position when toggled ON
+			if character then
+				savedSeaPosition = character:GetPivot()
+			end
+			
+			task.spawn(function()
+				while _G.CursedFinger do
+					local dropsContainer = workspace:FindFirstChild("Drops")
+					if dropsContainer then
+						local items = dropsContainer:GetChildren()
+						for _, item in ipairs(items) do
+							if not _G.CursedFinger then break end
+							
+							if item.Name == "CursedFinger" and item:IsA("Model") then
+								collectFinger(item)
+							end
+						end
+					end
+					task.wait(1)
+				end
+			end)
+		else
+			-- Restore the saved position when toggled OFF
+			if savedSeaPosition and character then
+				character:PivotTo(savedSeaPosition)
+				savedSeaPosition = nil
+			end
+		end
+	end
+})
+
 -- 4. TAB: MISCELLANEOUS
 local tabMisc = Window:CreateTab({
 	Name = "Misc",
@@ -3856,7 +4039,7 @@ secMiscCore:CreateDropdown({
 		end
 	end
 })
-if setfpscap then setfpscap(15) end -- Applies the 15 FPS cap on load
+if setfpscap then setfpscap(30) end -- Applies the 15 FPS cap on load
 
 secMiscCore:CreateButton({
 	Name = "Execute Infinite Yield",
