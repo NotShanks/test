@@ -407,11 +407,10 @@ local function countGrandOres()
 	local oresFolder = workspace:FindFirstChild("Ores")
 	if oresFolder then
 		for _, v in pairs(oresFolder:GetChildren()) do
-			if string.find(v.Name, "GrandMana") then
-				local hpValue = v:FindFirstChild("HP")
-				if not hpValue or hpValue.Value > 0 then
-					count = count + 1
-				end
+			-- Removed the "GrandMana" name check
+			local hpValue = v:FindFirstChild("HP")
+			if not hpValue or hpValue.Value > 0 then
+				count = count + 1
 			end
 		end
 	end
@@ -2249,7 +2248,7 @@ local function SlingshotKillAll(toggleKey)
     task.spawn(function()
         saveOriginalPosition()
 
-        local PULLBACK_DISTANCE = 150
+        local PULLBACK_DISTANCE = 100
         local DASH_TIME = 0
         local LOOP_DELAY = 0
         local FIRE_PERCENT = 1
@@ -2521,17 +2520,16 @@ local function GrandOreFarm()
 				local shortestDistance = math.huge 
 
 				for i, v in pairs(oresFolder:GetChildren()) do
-					if string.find(v.Name, "GrandMana") then
-						local mainPart = v:FindFirstChild("Main")
-						if mainPart and mainPart:IsA("BasePart") then
-							local hpValue = v:FindFirstChild("HP")
-							local isAlive = not hpValue or (hpValue and hpValue.Value > 0)
-							if isAlive then
-								local distance = (hrp.Position - mainPart.Position).Magnitude
-								if distance < shortestDistance then
-									shortestDistance = distance
-									closestOre = v
-								end
+					-- Removed the name check to target all ores in the folder
+					local mainPart = v:FindFirstChild("Main")
+					if mainPart and mainPart:IsA("BasePart") then
+						local hpValue = v:FindFirstChild("HP")
+						local isAlive = not hpValue or (hpValue and hpValue.Value > 0)
+						if isAlive then
+							local distance = (hrp.Position - mainPart.Position).Magnitude
+							if distance < shortestDistance then
+								shortestDistance = distance
+								closestOre = v
 							end
 						end
 					end
@@ -3179,10 +3177,12 @@ local function StartMasterAutoDungeon()
 				
 				if chestsFolder then
 					for _, chest in pairs(chestsFolder:GetChildren()) do
-						if chest.Name == "TreasureChest" and chest:FindFirstChild("Center") then
-							local prompt = chest.Center:FindFirstChildWhichIsA("ProximityPrompt")
+						if chest.Name == "TreasureChest" then
+							-- Find prompt recursively to handle streaming delays
+							local prompt = chest:FindFirstChildWhichIsA("ProximityPrompt", true)
 							if prompt and prompt.Enabled then
-								local dist = (chest.Center.Position - root.Position).Magnitude
+								-- Measure distance from pivot, not "Center", in case it hasn't loaded
+								local dist = (chest:GetPivot().Position - root.Position).Magnitude
 								if dist < shortestDist then
 									shortestDist = dist
 									targetChest = chest
@@ -3193,19 +3193,26 @@ local function StartMasterAutoDungeon()
 				end
 
 				if targetChest then
+					-- 1. Force teleport to the model's Pivot to trigger chunk loading
+					root.CFrame = targetChest:GetPivot()
+					
+					-- 2. Snap to the exact Center part if it has loaded in
 					local center = targetChest:FindFirstChild("Center")
 					if center then
 						root.CFrame = center.CFrame
-						local prompt = center:FindFirstChildWhichIsA("ProximityPrompt")
-						if prompt and prompt.Enabled then
-							prompt.HoldDuration = 0
+					end
+					
+					local prompt = targetChest:FindFirstChildWhichIsA("ProximityPrompt", true)
+					if prompt and prompt.Enabled then
+						prompt.HoldDuration = 0
+						-- Minimum engine wait required for the server to validate your new position
+						task.wait(0.05)
+						pcall(function() fireproximityprompt(prompt) end)
+						
+						local timeout = tick()
+						while prompt.Enabled and tick() - timeout < 1.5 do
 							task.wait(0.1)
 							pcall(function() fireproximityprompt(prompt) end)
-							
-							local timeout = tick()
-							while prompt.Enabled and tick() - timeout < 1.5 do
-								task.wait(0.05)
-							end
 						end
 					end
 					continue
@@ -3230,21 +3237,27 @@ local function StartMasterAutoDungeon()
 					local openVal = targetMimic:FindFirstChild("OpenChest")
 					
 					if openVal and openVal.Value == false then
+						-- 1. Force teleport to Pivot
+						root.CFrame = targetMimic:GetPivot()
+						
+						-- 2. Refine position to BitePlayer or IdleCollision if available
 						local bitePlayer = targetMimic:FindFirstChild("BitePlayer") or targetMimic:FindFirstChild("IdleCollision")
 						if bitePlayer then
 							root.CFrame = bitePlayer.CFrame
-							task.wait(0.1)
 						end
 						
-						local prompt = targetMimic:FindFirstChild("IdleCollision") and targetMimic.IdleCollision:FindFirstChild("ProximityPrompt")
+						local prompt = targetMimic:FindFirstChildWhichIsA("ProximityPrompt", true)
 						if prompt and prompt.Enabled then
 							prompt.HoldDuration = 0
+							task.wait(0.05) -- Minimum position validation delay
 							pcall(function() fireproximityprompt(prompt) end)
 							
 							local timeout = tick()
 							while targetMimic.Parent and tick() - timeout < 2 do
 								if openVal.Value == true then break end
 								task.wait(0.1)
+								-- Keep spamming it in the loop just in case
+								pcall(function() fireproximityprompt(prompt) end)
 							end
 						end
 
@@ -3623,7 +3636,7 @@ local secStats = tabGates:CreateSection("Environmental Tracking Counters")
 
 local lblOres, lblChests
 lblOres = secStats:CreateLabel({
-	Text = "Grand Ores: Not Active",
+	Text = "Ores: Not Active",
 	Style = 2
 })
 
@@ -3643,7 +3656,7 @@ task.spawn(function()
 					initialOres = countGrandOres()
 				end
 				_G.GrandOresLeft = countGrandOres()
-				lblOres:Set("Grand Ores: " .. tostring(_G.GrandOresLeft) .. " / " .. tostring(initialOres))
+				lblOres:Set("Ores: " .. tostring(_G.GrandOresLeft) .. " / " .. tostring(initialOres))
 			else
 				initialOres = 0
 			end
@@ -3777,8 +3790,8 @@ secCombatGates:CreateToggle({
 })
 
 secCombatGates:CreateToggle({
-	Name = "Auto Mine Grand Ore",
-	Description = "Mine grand ores within map boundaries automatically.",
+	Name = "Auto Mine Ore",
+	Description = "Mine ores within map boundaries automatically.",
 	CurrentValue = false,
 	Callback = function(val)
 		_G.AutoGrandOre = val
