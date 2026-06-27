@@ -3853,28 +3853,19 @@ secDestruct:CreateButton({
 -- TELEPORT PERSISTENT EXECUTOR (Auto-Run)
 -- ==========================================
 local queue_on_teleport = queue_on_teleport or (syn and syn.queue_on_teleport)
+
 if queue_on_teleport then
-	game.Players.LocalPlayer.OnTeleport:Connect(function(State)
-		if State == Enum.TeleportState.Started then
-			local runCmd = ""
-			if isfile and isfile("utilityHub.txt") then
-				runCmd = 'loadstring(readfile("utilityHub.txt"))()'
-			elseif isfile and isfile("utilityHub.lua") then
-				runCmd = 'loadstring(readfile("utilityHub.lua"))()'
-			elseif isfile and isfile("LunaUISorce.txt") then
-				runCmd = 'loadstring(readfile("LunaUISorce.txt"))()'
-			else
-				runCmd = 'if isfile("utilityHub.txt") then loadstring(readfile("utilityHub.txt"))() end'
-			end
-			if runCmd ~= "" then
-				queue_on_teleport([[
-					repeat task.wait() until game:IsLoaded()
-					task.wait(1)
-					pcall(function()
-						]] .. runCmd .. [[
-					end)
-				]])
-			end
-		end
-	end)
+    game.Players.LocalPlayer.OnTeleport:Connect(function(State)
+        if State == Enum.TeleportState.Started then
+            local githubUrl = "https://raw.githubusercontent.com/NotShanks/test/refs/heads/master/uHub.txt"
+            
+            queue_on_teleport(([[
+                repeat task.wait() until game:IsLoaded()
+                task.wait(5)
+                pcall(function()
+                    loadstring(game:HttpGet("%s"))()
+                end)
+            ]]):format(githubUrl))
+        end
+    end)
 end
