@@ -3312,13 +3312,15 @@ local gateDropdown, spawnDropdown, markerDropdown
 local function RefreshGatesAndSpawns()
 	pcall(function()
 		if gateDropdown then
-			local rawList, _ = getGates()
+			local rawList, newRefs = getGates()
+			gateRefs = newRefs -- This saves the actual object locations!
 			gateDropdown:Set({Options = rawList})
 		end
 	end)
 	pcall(function()
 		if spawnDropdown then
-			local rawList, _ = getSpawns()
+			local rawList, newRefs = getSpawns()
+			spawnRefs = newRefs -- This saves the actual object locations!
 			spawnDropdown:Set({Options = rawList})
 		end
 	end)
