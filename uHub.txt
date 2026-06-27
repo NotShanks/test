@@ -3852,16 +3852,21 @@ secDestruct:CreateButton({
 -- ==========================================
 -- TELEPORT PERSISTENT EXECUTOR (Auto-Run)
 -- ==========================================
-local queue_on_teleport = queue_on_teleport or (syn and syn.queue_on_teleport)
+local Players = game:GetService("Players")
+local queue_on_teleport = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
 
+local TeleportCheck = false
 if queue_on_teleport then
-    game.Players.LocalPlayer.OnTeleport:Connect(function(State)
-        if State == Enum.TeleportState.Started then
+    Players.LocalPlayer.OnTeleport:Connect(function(State)
+        -- Infinite Yield checks State implicitly, but checking for 'Started' prevents double-firing
+        if State == Enum.TeleportState.Started and not TeleportCheck then
+            TeleportCheck = true
+            
             local githubUrl = "https://raw.githubusercontent.com/NotShanks/test/refs/heads/master/uHub.txt"
             
             queue_on_teleport(([[
                 repeat task.wait() until game:IsLoaded()
-                task.wait(5)
+                task.wait(5) -- Forces the script to wait 5 seconds after loading
                 pcall(function()
                     loadstring(game:HttpGet("%s"))()
                 end)
