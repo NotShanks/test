@@ -3580,7 +3580,11 @@ secRuinsCore:CreateButton({
 		
 		if targetGate then
 			local pos = targetGate:IsA("Model") and targetGate:GetPivot().Position or targetGate.Position
-			doSmartTween(pos) -- Uses your built-in safe tweening function
+			local hrp = game.Players.LocalPlayer.Character.HumanoidRootPart
+
+			-- Preserves current rotation, only changes the position
+			hrp.CFrame = CFrame.new(pos) * (hrp.CFrame - hrp.CFrame.Position)
+
 			Luna:Notification({Title = "Kings Ruins", Content = "Teleporting to ExitGate...", Icon = "check_circle_outline"})
 		else
 			Luna:Notification({Title = "Kings Ruins", Content = "No ExitGate found in workspace.", Icon = "warning"})
