@@ -359,9 +359,9 @@ local function getGates()
 				local levelObj = gateModel:FindFirstChild("Level", true)
 				local rankObj = gateModel:FindFirstChild("Rank", true)
 				
-				-- [NEW] Timer Calculation
+				-- [FIXED] Recursive search for TimeSpawned
 				local timeLeftStr = ""
-				local timeSpawnedObj = gateModel:FindFirstChild("TimeSpawned")
+				local timeSpawnedObj = gateModel:FindFirstChild("TimeSpawned", true)
 				
 				if timeSpawnedObj then
 					local spawnTime = tonumber(timeSpawnedObj.Value)
@@ -1443,38 +1443,30 @@ function Luna:CreateWindow(WindowSettings)
 						local timerStr = parts[2]
 						
 						if timerStr then
-							baseName = baseName .. "]" -- Re-add the closing bracket we split off of
+							baseName = baseName .. "]" -- Re-add the bracket
+							timerStr = "⏳ " .. timerStr
 						else
-							baseName = gateString -- Fallback if there's no timer
-							timerStr = ""
+							baseName = gateString -- Fallback if timer is missing
+							timerStr = "⏳ Scanning..."
 						end
 
-						-- Assign the base name to the card
-						configureCard(card, baseName, "", nil, nil)
+						-- Feed the timer into the 'Desc' slot of configureCard
+						configureCard(card, baseName, timerStr, nil, nil)
 						
+						-- Ensure text fits beautifully
 						pcall(function()
-							-- Format and place the Timer at the top empty space
-							if card:FindFirstChild("Value") then 
-								if timerStr ~= "" then
-									card.Value.Text = "⏳ " .. timerStr 
-									card.Value.Visible = true
-									card.Value.TextSize = 15
-									card.Value.Position = UDim2.new(0, 0, 0, 8)
-									card.Value.Size = UDim2.new(1, 0, 0, 20)
-									card.Value.TextXAlignment = Enum.TextXAlignment.Center
-								else
-									card.Value.Visible = false
-								end
-							end
-							
-							-- Format and push the Title down so it sits under the Timer
 							if card:FindFirstChild("Title") then
-								card.Title.TextScaled = false 
+								card.Title.TextScaled = false
 								card.Title.TextSize = 13
 								card.Title.TextWrapped = true
-								card.Title.Position = UDim2.new(0, 5, 0, 30)
-								card.Title.Size = UDim2.new(1, -10, 1, -30)
-								card.Title.TextYAlignment = Enum.TextYAlignment.Center
+							end
+							-- Force the description (timer) to be highly visible
+							for _, child in pairs(card:GetDescendants()) do
+								if child:IsA("TextLabel") and (string.find(child.Name:lower(), "desc") or string.find(child.Name:lower(), "sub")) then
+									child.TextSize = 14
+									child.TextColor3 = Color3.fromRGB(255, 255, 255)
+									child.Visible = true
+								end
 							end
 						end)
 					else
