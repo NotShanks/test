@@ -2248,39 +2248,31 @@ task.spawn(function()
 				end)
 				lastConsumableFire = tick()
 			end
-
-			-- Dynamic Magic Healing (Below 30% MaxHealth, spams every 1s safely over combat logic loops)
+			-- Dynamic Magic Healing (Below 50% MaxHealth, spams them one-by-one sequentially)
 			pcall(function()
 				local char = Player.Character
 				if char and char:FindFirstChild("Health") and char:FindFirstChild("MaxHealth") then
 					local h = char.Health.Value
 					local m = char.MaxHealth.Value
 					
-					if m > 0 and (h / m) < 0.30 then
+					-- 0.50 threshold (50%)
+					if m > 0 and (h / m) < 0.50 then
+						-- Throttles the loop to fire the sequence once every 1 second
 						if tick() - lastHealFire >= 1 then
-							-- 1) CureMeadow Magic Remote
-							pcall(function()
-								if char:FindFirstChild("CureMeadow") and char.CureMeadow:FindFirstChild("ServerScript") and char.CureMeadow.ServerScript:FindFirstChild("Charge") then
-									char.CureMeadow.ServerScript.Charge:FireServer()
-								end
-							end)
-							
-							-- 2) Player Healer Logic Script Remote
-							pcall(function()
-								local gui = Player:FindFirstChild("PlayerGui")
-								if gui and gui:FindFirstChild("Parkour") and gui.Parkour:FindFirstChild("Script") and gui.Parkour.Script:FindFirstChild("Healer") then
-									gui.Parkour.Script.Healer:FireServer()
-								end
-							end)
-							
-							-- 3) LatricReclamation Magic Remote
-							pcall(function()
-								if char:FindFirstChild("LatricReclamation") and char.LatricReclamation:FindFirstChild("ServerScript") and char.LatricReclamation.ServerScript:FindFirstChild("Charge") then
-									char.LatricReclamation.ServerScript.Charge:FireServer()
-								end
-							end)
-							
 							lastHealFire = tick()
+							
+							task.spawn(function()
+								-- 1) Cure Meadow
+								pcall(function() char.CureMeadow.ServerScript.Charge:FireServer() end)
+								task.wait(0.3) -- Delay before next
+								
+								-- 2) Parkour Healer script
+								pcall(function() Player.PlayerGui.Parkour.Script.Healer:FireServer() end)
+								task.wait(0.3) -- Delay before next
+								
+								-- 3) Latric Reclamation
+								pcall(function() char.LatricReclamation.ServerScript.Charge:FireServer() end)
+							end)
 						end
 					end
 				end
