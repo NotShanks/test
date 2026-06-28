@@ -2193,7 +2193,8 @@ end
 -- UNIFIED COMBAT & SUSTAINABILITY ENGINE
 -- ==========================================
 task.spawn(function()
-	local lastChaliceFire = tick()
+	local lastConsumableFire = tick()
+	local lastHealFire = tick()
 
 	while task.wait(0.1) do
 		if not Player then continue end
@@ -2228,30 +2229,58 @@ task.spawn(function()
 			end)
 		end
 
-		if combatActive or _G.AutoEat then
-			if tick() - lastChaliceFire >= 1 then
+		if combatActive then
+			-- Centralized consumable remote firing (1 second throttle)
+			if tick() - lastConsumableFire >= 1 then
 				pcall(function()
 					local remotes = ReplicatedStorage:FindFirstChild("Remotes")
-					if remotes and remotes:FindFirstChild("IchorChalice") then
-						remotes.IchorChalice:FireServer()
+					if remotes then
+						if remotes:FindFirstChild("IchorChalice") then
+							remotes.IchorChalice:FireServer()
+						end
+						if remotes:FindFirstChild("Ambrosia") then
+							remotes.Ambrosia:FireServer()
+						end
+						if remotes:FindFirstChild("AethericExtract") then
+							remotes.AethericExtract:FireServer()
+						end
 					end
 				end)
-				lastChaliceFire = tick()
+				lastConsumableFire = tick()
 			end
 
+			-- Dynamic Magic Healing (Below 30% MaxHealth, spams every 1s safely over combat logic loops)
 			pcall(function()
 				local char = Player.Character
 				if char and char:FindFirstChild("Health") and char:FindFirstChild("MaxHealth") then
-					local h, m = char.Health.Value, char.MaxHealth.Value
-					if m > 0 and (h / m) < 0.35 then
-						local gui = Player:FindFirstChild("PlayerGui")
-						local eatRemote = gui and gui:FindFirstChild("Parkour") and gui.Parkour.Script:FindFirstChild("Eat")
-						if eatRemote then
-							while (combatActive or _G.AutoEat) and char and char:FindFirstChild("Health") do
-								if (char.Health.Value / char.MaxHealth.Value) >= 0.80 then break end
-								eatRemote:FireServer("CookedRainbowFish")
-								task.wait(0.05)
-							end
+					local h = char.Health.Value
+					local m = char.MaxHealth.Value
+					
+					if m > 0 and (h / m) < 0.30 then
+						if tick() - lastHealFire >= 1 then
+							-- 1) CureMeadow Magic Remote
+							pcall(function()
+								if char:FindFirstChild("CureMeadow") and char.CureMeadow:FindFirstChild("ServerScript") and char.CureMeadow.ServerScript:FindFirstChild("Charge") then
+									char.CureMeadow.ServerScript.Charge:FireServer()
+								end
+							end)
+							
+							-- 2) Player Healer Logic Script Remote
+							pcall(function()
+								local gui = Player:FindFirstChild("PlayerGui")
+								if gui and gui:FindFirstChild("Parkour") and gui.Parkour:FindFirstChild("Script") and gui.Parkour.Script:FindFirstChild("Healer") then
+									gui.Parkour.Script.Healer:FireServer()
+								end
+							end)
+							
+							-- 3) LatricReclamation Magic Remote
+							pcall(function()
+								if char:FindFirstChild("LatricReclamation") and char.LatricReclamation:FindFirstChild("ServerScript") and char.LatricReclamation.ServerScript:FindFirstChild("Charge") then
+									char.LatricReclamation.ServerScript.Charge:FireServer()
+								end
+							end)
+							
+							lastHealFire = tick()
 						end
 					end
 				end
@@ -2483,18 +2512,6 @@ end
 local isMining = false
 local function GrandOreFarm()
 	task.spawn(function()
-		task.spawn(function()
-			while _G.AutoGrandOre do
-				pcall(function()
-					local remotes = ReplicatedStorage:FindFirstChild("Remotes")
-					if remotes and remotes:FindFirstChild("IchorChalice") then
-						remotes.IchorChalice:FireServer()
-					end
-				end)
-				task.wait(1)
-			end
-		end)
-
 		task.spawn(function()
 			while _G.AutoGrandOre do
 				pcall(function()
@@ -4093,8 +4110,8 @@ secMiscCore:CreateToggle({
 })
 
 secMiscCore:CreateToggle({
-	Name = "Auto Eat",
-	Description = "Consume cooked rainbow fish during low HP conditions.",
+	Name = "Auto Heal (Magic)",
+	Description = "Auto cast healing spells (below 30% HP) + maintain combat consumables.",
 	CurrentValue = false,
 	Callback = function(val)
 		_G.AutoEat = val
