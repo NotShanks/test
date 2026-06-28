@@ -228,67 +228,96 @@ local function doSmartTween(targetPos)
 		return
 	end
 	_G.CancelTween = false
+	
 	local char = Player.Character
-	if not char or not char:FindFirstChild("HumanoidRootPart") then return end
-	local hrp = char.HumanoidRootPart
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	local humanoid = char and char:FindFirstChildWhichIsA("Humanoid")
+	if not char or not hrp or not humanoid then return end
 
-	local floatPad = Instance.new("Part")
-	floatPad.Size = Vector3.new(4, 1, 4)
-	floatPad.Transparency = 1
-	floatPad.Anchored = true
-	floatPad.CanCollide = true
-	floatPad.Parent = workspace
+	local tpSpeed = 200 
 
+	-- 1. Mimic IY "Fly" by disabling Humanoid physical interactions
+	humanoid.PlatformStand = true 
+	
+	-- 2. Suspend gravity entirely so the server doesn't think you are falling
+	local bv = Instance.new("BodyVelocity")
+	bv.Velocity = Vector3.new(0, 0, 0)
+	bv.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+	bv.Parent = hrp
+
+	-- 3. Strict Noclip (No FloatPad needed anymore, it causes clipping)
 	local noclipConn = RunService.Stepped:Connect(function()
 		for _, v in pairs(char:GetDescendants()) do
 			if v:IsA("BasePart") and v.CanCollide then
 				v.CanCollide = false
 			end
 		end
-		floatPad.CFrame = hrp.CFrame * CFrame.new(0, -3.5, 0)
 	end)
 
-	local speed = 250
-	local bv = Instance.new("BodyVelocity")
-	bv.Velocity = Vector3.new(0, 0, 0)
-	bv.MaxForce = Vector3.new(9e9, 9e9, 9e9)
-	bv.Parent = hrp
+	local function tpWalkTo(targetVec)
+		local reached = false
+		local tpConnection
 
-	local function tweenTo(cframeTarget)
-		local dist = (cframeTarget.Position - hrp.Position).Magnitude
-		if dist < 5 then return end
-		
-		local timeToReach = dist / speed
-		local tInfo = TweenInfo.new(timeToReach, Enum.EasingStyle.Linear)
-		local t = TweenService:Create(hrp, tInfo, {CFrame = cframeTarget})
-		t:Play()
-		
-		local lastDist = dist
-		while t.PlaybackState == Enum.PlaybackState.Playing and not _G.CancelTween do
-			task.wait(0.1)
-			local currDist = (cframeTarget.Position - hrp.Position).Magnitude
-			if currDist > lastDist + 15 then
-				t:Cancel()
-				break
+		tpConnection = RunService.Heartbeat:Connect(function(delta)
+			if _G.CancelTween or not char or not hrp or not hrp.Parent then
+				reached = true
+				if tpConnection then tpConnection:Disconnect() end
+				return
 			end
-			lastDist = currDist
+
+			local currentPos = hrp.Position
+			local dist = (targetVec - currentPos).Magnitude
+
+			-- Stopping threshold
+			if dist < 5 then
+				reached = true
+				if tpConnection then tpConnection:Disconnect() end
+				return
+			end
+
+			local direction = (targetVec - currentPos).Unit
+			local moveAmount = direction * tpSpeed * delta * 10
+
+			if moveAmount.Magnitude > dist then
+				char:TranslateBy(direction * dist)
+				reached = true
+				if tpConnection then tpConnection:Disconnect() end
+			else
+				char:TranslateBy(moveAmount)
+			end
+			
+			-- 4. Keep zeroing momentum so physics doesn't fight the translation
+			hrp.Velocity = Vector3.zero
+			hrp.AssemblyLinearVelocity = Vector3.zero
+		end)
+
+		while not reached do
+			task.wait()
 		end
-		if _G.CancelTween then t:Cancel() end
 	end
 
+	-- Execute the smart pathing sequence
 	if not _G.CancelTween then
-		tweenTo(CFrame.new(hrp.Position + Vector3.new(0, 300, 0)))
+		tpWalkTo(hrp.Position + Vector3.new(0, 300, 0))
 	end
 	if not _G.CancelTween then
-		tweenTo(CFrame.new(targetPos.X, hrp.Position.Y, targetPos.Z))
+		tpWalkTo(Vector3.new(targetPos.X, hrp.Position.Y + 300, targetPos.Z)) 
 	end
 	if not _G.CancelTween then
-		tweenTo(CFrame.new(targetPos + Vector3.new(0, 3, 0)))
+		tpWalkTo(targetPos + Vector3.new(0, 3, 0))
 	end
 
-	bv:Destroy()
-	noclipConn:Disconnect()
-	floatPad:Destroy()
+	-- 5. Cleanup & Restore State
+	if bv then bv:Destroy() end
+	if noclipConn then noclipConn:Disconnect() end
+	if humanoid then humanoid.PlatformStand = false end
+	
+	-- 6. Zero out momentum at the end so you don't fling upon landing
+	if hrp then
+		hrp.Velocity = Vector3.zero
+		hrp.AssemblyLinearVelocity = Vector3.zero
+		hrp.AssemblyAngularVelocity = Vector3.zero
+	end
 end
 
 local activeNoclip = nil
