@@ -359,7 +359,7 @@ local function getGates()
 				local levelObj = gateModel:FindFirstChild("Level", true)
 				local rankObj = gateModel:FindFirstChild("Rank", true)
 				
-				-- [FIXED] Recursive search for TimeSpawned
+				-- Accurate Timer Calculation
 				local timeLeftStr = ""
 				local timeSpawnedObj = gateModel:FindFirstChild("TimeSpawned", true)
 				
@@ -1433,40 +1433,21 @@ function Luna:CreateWindow(WindowSettings)
 			
 			for i, card in ipairs(cards) do
 				if card then
-					local gateString = validGates[i]
-					if gateString then
+					local gateName = validGates[i]
+					if gateName then
 						card.Visible = true
-						
-						-- Split the string to separate the gate name and the timer
-						local parts = string.split(gateString, "] | ")
-						local baseName = parts[1]
-						local timerStr = parts[2]
-						
-						if timerStr then
-							baseName = baseName .. "]" -- Re-add the bracket
-							timerStr = "⏳ " .. timerStr
-						else
-							baseName = gateString -- Fallback if timer is missing
-							timerStr = "⏳ Scanning..."
-						end
-
-						-- Feed the timer into the 'Desc' slot of configureCard
-						configureCard(card, baseName, timerStr, nil, nil)
-						
-						-- Ensure text fits beautifully
+						-- Maps the Gate's actual name to the Title text and hides the small grey text
+						configureCard(card, gateName, "", nil, nil)
 						pcall(function()
-							if card:FindFirstChild("Title") then
-								card.Title.TextScaled = false
-								card.Title.TextSize = 13
-								card.Title.TextWrapped = true
+							if card:FindFirstChild("Value") then 
+								card.Value.Text = "" 
+								card.Value.Visible = false
 							end
-							-- Force the description (timer) to be highly visible
-							for _, child in pairs(card:GetDescendants()) do
-								if child:IsA("TextLabel") and (string.find(child.Name:lower(), "desc") or string.find(child.Name:lower(), "sub")) then
-									child.TextSize = 14
-									child.TextColor3 = Color3.fromRGB(255, 255, 255)
-									child.Visible = true
-								end
+							if card:FindFirstChild("Title") then
+								card.Title.TextScaled = false 
+								card.Title.TextSize = 14
+								card.Title.TextWrapped = true
+								card.Title.Size = UDim2.new(1, -10, 1, 0)
 							end
 						end)
 					else
@@ -3500,7 +3481,7 @@ gateDropdown = secTweenGates:CreateDropdown({
 
 secTweenGates:CreateButton({
 	Name = "Apply ESP Highlights",
-	Description = "Construct custom highlights on portals.",
+	Description = "Construct live-ticking custom highlights on portals.",
 	Callback = function()
 		local targetGate = gateRefs[selectedGate]
 		if targetGate then
@@ -3523,7 +3504,7 @@ secTweenGates:CreateButton({
 					icon.Adornee = gatePart 
 					icon.AlwaysOnTop = true
 					icon.ExtentsOffset = Vector3.new(0, 5, 0) 
-					icon.Size = UDim2.new(0, 200, 0, 50)
+					icon.Size = UDim2.new(0, 250, 0, 50) -- Made slightly wider for the timer
 					icon.Parent = gatePart
 
 					local espText = Instance.new("TextLabel")
@@ -3531,12 +3512,46 @@ secTweenGates:CreateButton({
 					espText.BackgroundTransparency = 1.000
 					espText.Size = UDim2.new(1, 0, 1, 0)
 					espText.Font = Enum.Font.SciFi
-					espText.Text = selectedGate
+					espText.Text = selectedGate -- Initial text
 					espText.TextColor3 = espColor
 					espText.TextSize = 18.000
 					espText.TextStrokeTransparency = 0 
 					
-					Luna:Notification({Title = "Visual ESP", Content = "ESP Highlight added onto: " .. selectedGate, Icon = "visibility"})
+					-- [NEW] Fetch base info to reconstruct the name cleanly
+					local levelObj = targetGate:FindFirstChild("Level", true)
+					local rankObj = targetGate:FindFirstChild("Rank", true)
+					local timeSpawnedObj = targetGate:FindFirstChild("TimeSpawned", true)
+					
+					local lvl = levelObj and tostring(levelObj.Value) or "?"
+					local rnk = rankObj and tostring(rankObj.Value) or "?"
+					local baseName = string.format("%s [Lvl %s | Rank %s]", targetGate.Name, lvl, rnk)
+					local spawnTime = timeSpawnedObj and tonumber(timeSpawnedObj.Value) or nil
+
+					-- [NEW] Live ticking loop
+					task.spawn(function()
+						-- Loop runs only while the gate exists in the workspace
+						while gatePart and gatePart:IsDescendantOf(workspace) do
+							local timerStr = " | Expired"
+							if spawnTime then
+								local remaining = 550 - (os.time() - spawnTime)
+								if remaining > 0 then
+									local mins = math.floor(remaining / 60)
+									local secs = remaining % 60
+									timerStr = string.format(" | %02d:%02d", mins, secs)
+								end
+							end
+							
+							if espText then
+								espText.Text = baseName .. timerStr
+							else
+								break -- Failsafe if the text label gets deleted
+							end
+							
+							task.wait(1)
+						end
+					end)
+
+					Luna:Notification({Title = "Visual ESP", Content = "Live ESP Highlight added onto: " .. baseName, Icon = "visibility"})
 				else
 					Luna:Notification({Title = "ESP Manager", Content = "Visual layout already exists on destination.", Icon = "warning"})
 				end
