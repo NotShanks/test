@@ -2418,6 +2418,165 @@ local function SlingshotKillAll(toggleKey)
     end)
 end
 
+local function SlingshotKillOverworld(toggleKey)
+	task.spawn(function()
+		saveOriginalPosition()
+
+		local PULLBACK_DISTANCE = 100
+		local DASH_TIME = 0
+		local LOOP_DELAY = 0
+		local FIRE_PERCENT = 1
+		local FAKE_SPEED = 3000
+
+		local function fireODMRemotes(myRoot, targetRoot)
+			local playerGui = Player:FindFirstChild("PlayerGui")
+			if playerGui then pcall(function() playerGui.Parkour.Script.ODMSlash:FireServer("Right") end) end
+
+			local char = Player.Character
+			if char and char:FindFirstChild("TitanBlades") then
+				pcall(function()
+					local ss = char.TitanBlades:FindFirstChild("SwordScript")
+					if ss and ss:FindFirstChild("ODMDown") then ss.ODMDown:FireServer() end
+					if ss and ss:FindFirstChild("ODMUp") then ss.ODMUp:FireServer() end
+				end)
+			end
+
+			local direction = (targetRoot.Position - myRoot.Position).Unit
+			myRoot.AssemblyLinearVelocity = direction * FAKE_SPEED
+		end
+
+		while _G[toggleKey] do
+			local myChar = Player.Character
+			local targetMob = nil
+			local mobsFolder = workspace:FindFirstChild("Mobs")
+			local effects = workspace:FindFirstChild("Effects")
+
+			if mobsFolder and myChar and myChar:FindFirstChild("HumanoidRootPart") then
+				local myRoot = myChar.HumanoidRootPart
+				local validMobs = {}
+
+				-- 1. Gather all alive mobs (excluding Regulus)
+				for _, v in pairs(mobsFolder:GetChildren()) do
+					if v.Name ~= "Regulus" and v:FindFirstChild("HumanoidRootPart") and isEntityAlive(v) then
+						local hp = math.huge
+						if v:FindFirstChild("Health") then
+							hp = v.Health.Value
+						elseif v:FindFirstChild("Humanoid") then
+							hp = v.Humanoid.Health
+						end
+						local dist = (v.HumanoidRootPart.Position - myRoot.Position).Magnitude
+						table.insert(validMobs, {mob = v, hp = hp, dist = dist})
+					end
+				end
+
+				-- 2. Determine if we should throttle
+				local shouldThrottle = true
+				if effects then
+					local worldType = effects:FindFirstChild("WorldType")
+					local gate = effects:FindFirstChild("Gate")
+					
+					-- Check if we are inside a Gate and have access to the counters
+					if worldType and worldType.Value == "Gate" and gate then
+						local totalMobs = gate:FindFirstChild("TotalMobs")
+						local mobsDefeated = gate:FindFirstChild("MobsDefeated")
+						
+						if totalMobs and mobsDefeated then
+							local remainingToDefeat = totalMobs.Value - mobsDefeated.Value
+							-- If the amount left to defeat is <= what is currently alive, 
+							-- the final wave is out. Kill them all.
+							if remainingToDefeat <= #validMobs then
+								shouldThrottle = false
+							end
+						end
+					end
+				end
+
+				-- 3. Select Target
+				if #validMobs > 0 then
+					if shouldThrottle and #validMobs > 2 then
+						-- Sort ascending by HP (index 1 & 2 will be the lowest HP)
+						table.sort(validMobs, function(a, b) return a.hp < b.hp end)
+
+						local shortestDist = math.huge
+						-- Loop starting at index 3, effectively protecting the 2 lowest HP mobs
+						for i = 3, #validMobs do
+							if validMobs[i].dist < shortestDist then
+								shortestDist = validMobs[i].dist
+								targetMob = validMobs[i].mob
+							end
+						end
+					else
+						-- No throttling needed (Gate is ending, or only 2 mobs exist and aren't in a gate)
+						local shortestDist = math.huge
+						for i = 1, #validMobs do
+							if validMobs[i].dist < shortestDist then
+								shortestDist = validMobs[i].dist
+								targetMob = validMobs[i].mob
+							end
+						end
+					end
+				end
+			end
+
+			if targetMob then
+				local cam = workspace.CurrentCamera
+				local camConn
+				if cam then
+					cam.CameraType = Enum.CameraType.Scriptable
+					camConn = RunService.RenderStepped:Connect(function()
+						if targetMob and targetMob:FindFirstChild("HumanoidRootPart") then
+							local tPos = targetMob.HumanoidRootPart.Position
+							cam.CFrame = CFrame.lookAt(tPos + Vector3.new(0, 30, 40), tPos)
+						end
+					end)
+				end
+
+				local lastHRFire = 0
+				local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+
+				while _G[toggleKey] and isEntityAlive(targetMob) and myChar and myChar:FindFirstChild("HumanoidRootPart") do
+					myRoot = myChar.HumanoidRootPart
+					if tick() - lastHRFire >= 1 then
+						triggerHeavenlyRestriction()
+						lastHRFire = tick()
+					end
+
+					local targetRoot = targetMob:FindFirstChild("HumanoidRootPart")
+					if not targetRoot then break end
+
+					myRoot.CFrame = targetRoot.CFrame * CFrame.new(0, PULLBACK_DISTANCE, PULLBACK_DISTANCE)
+					local strikeCFrame = targetRoot.CFrame * CFrame.new(0, 0, -3)
+					local dashTween = TweenService:Create(myRoot, TweenInfo.new(DASH_TIME, Enum.EasingStyle.Linear), {CFrame = strikeCFrame})
+
+					dashTween:Play()
+
+					task.delay(DASH_TIME * FIRE_PERCENT, function()
+						if _G[toggleKey] and myRoot and targetRoot and isEntityAlive(targetMob) then
+							pcall(function() fireODMRemotes(myRoot, targetRoot) end)
+						end
+					end)
+
+					dashTween.Completed:Wait()
+					stopMomentum(myRoot)
+					task.wait(LOOP_DELAY)
+				end
+
+				stopMomentum(myRoot)
+				if camConn then camConn:Disconnect() end
+				if cam then cam.CameraType = Enum.CameraType.Custom end
+			else
+				local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+				stopMomentum(myRoot)
+			end
+			task.wait(0.1)
+		end
+
+		local finalCam = workspace.CurrentCamera
+		if finalCam then finalCam.CameraType = Enum.CameraType.Custom end
+		restoreOriginalPosition()
+	end)
+end
+
 local function KillRegulus()
 	task.spawn(function()
 		local LOOP_DELAY = 0.1 
@@ -3684,6 +3843,45 @@ secRuinsCore:CreateToggle({
 })
 
 secRuinsCore:CreateToggle({
+	Name = "Auto All Mobs (Slingshot)",
+	Description = "Initiate global mobs clear (excludes boss entities).",
+	CurrentValue = false,
+	Callback = function(val)
+		_G.AutoAllMobs = val
+		if val then
+			local bp = Player:FindFirstChild("Backpack")
+			local char = Player.Character
+			local hasBlades = (bp and bp:FindFirstChild("TitanBlades")) or (char and char:FindFirstChild("TitanBlades"))
+			
+			if not hasBlades then 
+				pcall(function()
+					unequipCurrent()
+					task.wait(0.15)
+					ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("UnequipSpec"):FireServer()
+					task.wait(0.15)
+					
+					local args = {
+						"RightWeapon",
+						"TitanBlades",
+						"BackRight",
+						"TitanBlades"
+					}
+					ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("BackWeapon"):FireServer(unpack(args))
+					task.wait(0.15)
+					loadWeapons()
+				end)
+				task.wait(0.5)
+			end
+			SlingshotKillAll("AutoAllMobs")
+		else
+			local cam = workspace.CurrentCamera
+			if cam then cam.CameraType = Enum.CameraType.Custom end
+			resetWalkSpeed()
+		end
+	end
+})
+
+secRuinsCore:CreateToggle({
 	Name = "Elven Sorceress Farm",
 	Description = "Initiate fast Slingshot combat on the Floor 3 Boss.",
 	CurrentValue = false,
@@ -3831,11 +4029,11 @@ secMarkers:CreateButton({
 local secCombatGates = tabGates:CreateSection("Combat Farm Automation")
 
 secCombatGates:CreateToggle({
-	Name = "Auto All Mobs (Slingshot)",
-	Description = "Initiate global mobs clear (excludes boss entities).",
+	Name = "Auto All Mobs [Throttled]",
+	Description = "Farms mobs but keeps the 2 weakest alive to prevent despawn breaks.",
 	CurrentValue = false,
 	Callback = function(val)
-		_G.AutoAllMobs = val
+		_G.AutoAllMobsOverworld = val
 		if val then
 			local bp = Player:FindFirstChild("Backpack")
 			local char = Player.Character
@@ -3860,23 +4058,11 @@ secCombatGates:CreateToggle({
 				end)
 				task.wait(0.5)
 			end
-			SlingshotKillAll("AutoAllMobs")
+			SlingshotKillOverworld("AutoAllMobsOverworld")
 		else
 			local cam = workspace.CurrentCamera
 			if cam then cam.CameraType = Enum.CameraType.Custom end
 			resetWalkSpeed()
-		end
-	end
-})
-
-secCombatGates:CreateToggle({
-	Name = "Normal Click (G) [Axe]",
-	Description = "Hold G to automatically swing the Lightning Axe.",
-	CurrentValue = false,
-	Callback = function(val)
-		_G.NormalClickG = val
-		if val then
-			setupNormalClickG()
 		end
 	end
 })
@@ -4191,7 +4377,8 @@ secDestruct:CreateButton({
 	Name = "Unload Framework UI",
 	Description = "Dismantle script processes safely.",
 	Callback = function()
-		_G.AutoAllMobs = false
+=		_G.AutoAllMobsOverworld = false
+==		_G.AutoAllMobs = false
 		_G.AutoRegulus = false
 		_G.AutoTreasure = false
 		_G.vv = false
