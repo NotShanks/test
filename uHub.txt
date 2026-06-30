@@ -4377,8 +4377,8 @@ secDestruct:CreateButton({
 	Name = "Unload Framework UI",
 	Description = "Dismantle script processes safely.",
 	Callback = function()
-=		_G.AutoAllMobsOverworld = false
-==		_G.AutoAllMobs = false
+		_G.AutoAllMobsOverworld = false
+		_G.AutoAllMobs = false
 		_G.AutoRegulus = false
 		_G.AutoTreasure = false
 		_G.vv = false
