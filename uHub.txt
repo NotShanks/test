@@ -2469,42 +2469,49 @@
     					end
     				end
     
-    				-- 2. Determine if we should throttle
-    				local shouldThrottle = true
-    				if effects then
-    					local worldType = effects:FindFirstChild("WorldType")
-    					local gate = effects:FindFirstChild("Gate")
-    					
-    					-- Check if we are inside a Gate and have access to the counters
-    					if worldType and worldType.Value == "Gate" and gate then
-    						local totalMobs = gate:FindFirstChild("TotalMobs")
-    						local mobsDefeated = gate:FindFirstChild("MobsDefeated")
-    						
-    						if totalMobs and mobsDefeated then
-    							local remainingToDefeat = totalMobs.Value - mobsDefeated.Value
-    							-- If the amount left to defeat is <= what is currently alive, 
-    							-- the final wave is out. Kill them all.
-    							if remainingToDefeat <= #validMobs then
-    								shouldThrottle = false
-    							end
-    						end
-    					end
-    				end
-    
-    				-- 3. Select Target
-    				if #validMobs > 0 then
-    					if shouldThrottle and #validMobs > 4 then
-    						-- Sort ascending by HP (index 1 & 2 will be the lowest HP)
-    						table.sort(validMobs, function(a, b) return a.hp < b.hp end)
-    
-    						local shortestDist = math.huge
-    						-- Loop starting at index 3, effectively protecting the 2 lowest HP mobs
-    						for i = 3, #validMobs do
-    							if validMobs[i].dist < shortestDist then
-    								shortestDist = validMobs[i].dist
-    								targetMob = validMobs[i].mob
-    							end
-    						end
+						-- 2. Determine if we should throttle
+					local shouldThrottle = true
+					if effects then
+						local worldType = effects:FindFirstChild("WorldType")
+						local gate = effects:FindFirstChild("Gate")
+						
+						-- Check if we are inside a Gate and have access to the counters
+						if worldType and worldType.Value == "Gate" and gate then
+							local totalMobs = gate:FindFirstChild("TotalMobs")
+							local mobsDefeated = gate:FindFirstChild("MobsDefeated")
+							
+							if totalMobs and mobsDefeated then
+								local remainingToDefeat = totalMobs.Value - mobsDefeated.Value
+								
+								-- FINAL WAVE OVERRIDE: 
+								-- If the amount left to defeat is <= what is currently alive, 
+								-- OR if there are 4 or fewer mobs remaining in the ENTIRE gate,
+								-- the final wave is trickling in. Disable the throttle!
+								if remainingToDefeat <= #validMobs or remainingToDefeat <= 4 then
+									shouldThrottle = false
+								end
+							end
+						end
+					end
+
+					-- 3. Select Target
+					if #validMobs > 0 then
+						if shouldThrottle then
+							-- Ensure we always keep an anchor of 2 mobs alive during the main waves
+							if #validMobs > 2 then
+								-- Sort by distance to find the closest mob
+								table.sort(validMobs, function(a, b) return a.dist < b.dist end)
+								targetMob = validMobs[1].mob
+							else
+								-- 2 or fewer mobs alive, do NOT set a target. Wait for spawns.
+								targetMob = nil 
+							end
+						else
+							-- No throttling needed (final wave or trickling end), kill everything closest first
+							table.sort(validMobs, function(a, b) return a.dist < b.dist end)
+							targetMob = validMobs[1].mob
+						end
+					end
     					else
     						-- No throttling needed (Gate is ending, or only 2 mobs exist and aren't in a gate)
     						local shortestDist = math.huge
