@@ -2495,6 +2495,12 @@ local function SlingshotKillOverworld(toggleKey)
 							if remainingToDefeat <= #validMobs then
 								shouldThrottle = false
 							end
+							
+							-- [NEW BYPASS]: If the gate total is under 5 (mini-bosses/small waves), attack immediately.
+							if totalMobs.Value < 5 then
+								shouldThrottle = false
+							end
+							
 							if remainingToDefeat <= 0 then
 								isGateFinished = true
 							end
