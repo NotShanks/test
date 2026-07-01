@@ -2157,6 +2157,12 @@ function Luna:CreateWindow(WindowSettings)
 	end
 
 	Main.Controls.Close.ImageLabel.MouseButton1Click:Connect(function()
+		-- [NEW]: Kill the teleport queue so it won't re-run on map changes
+		if _G.TeleportConnection then
+			_G.TeleportConnection:Disconnect()
+			_G.TeleportConnection = nil
+		end
+
 		Hide(Main, Window.Bind, true)
 		dragBar.Visible = false
 		Window.State = false
@@ -4396,6 +4402,12 @@ secDestruct:CreateButton({
 	Name = "Unload Framework UI",
 	Description = "Dismantle script processes safely.",
 	Callback = function()
+		-- [NEW]: Kill the teleport connection on full self-destruct
+		if _G.TeleportConnection then
+			_G.TeleportConnection:Disconnect()
+			_G.TeleportConnection = nil
+		end
+
 		_G.AutoAllMobsOverworld = false
 		_G.AutoAllMobs = false
 		_G.AutoRegulus = false
@@ -4437,8 +4449,14 @@ local queue_on_teleport = queue_on_teleport or (syn and syn.queue_on_teleport) o
 
 local TeleportCheck = false
 
+-- Clean up any leftover connection from previous script runs
+if _G.TeleportConnection then
+	_G.TeleportConnection:Disconnect()
+	_G.TeleportConnection = nil
+end
+
 if queue_on_teleport then
-	Players.LocalPlayer.OnTeleport:Connect(function(State)
+	_G.TeleportConnection = Players.LocalPlayer.OnTeleport:Connect(function(State)
 		if not TeleportCheck then
 			TeleportCheck = true
 			
