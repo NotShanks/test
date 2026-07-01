@@ -2419,156 +2419,175 @@ local function SlingshotKillAll(toggleKey)
 end
 
 local function SlingshotKillOverworld(toggleKey)
-task.spawn(function()
-	saveOriginalPosition()
+	task.spawn(function()
+		saveOriginalPosition()
+		-- 1. Lock in the exact CFrame from when you toggled the farm on
+		local safeCFrame = _G.SavedOriginalPosition
 
-	local PULLBACK_DISTANCE = 100
-	local DASH_TIME = 0
-	local LOOP_DELAY = 0
-	local FIRE_PERCENT = 1
-	local FAKE_SPEED = 3000
+		local PULLBACK_DISTANCE = 100
+		local DASH_TIME = 0
+		local LOOP_DELAY = 0
+		local FIRE_PERCENT = 1
+		local FAKE_SPEED = 3000
 
-	local function fireODMRemotes(myRoot, targetRoot)
-		local playerGui = Player:FindFirstChild("PlayerGui")
-		if playerGui then pcall(function() playerGui.Parkour.Script.ODMSlash:FireServer("Right") end) end
+		local mobAges = {} -- Dictionary to track when each mob spawned
+		local lastKillTime = tick()
 
-		local char = Player.Character
-		if char and char:FindFirstChild("TitanBlades") then
-			pcall(function()
-				local ss = char.TitanBlades:FindFirstChild("SwordScript")
-				if ss and ss:FindFirstChild("ODMDown") then ss.ODMDown:FireServer() end
-				if ss and ss:FindFirstChild("ODMUp") then ss.ODMUp:FireServer() end
-			end)
-		end
+		local function fireODMRemotes(myRoot, targetRoot)
+			local playerGui = Player:FindFirstChild("PlayerGui")
+			if playerGui then pcall(function() playerGui.Parkour.Script.ODMSlash:FireServer("Right") end) end
 
-		local direction = (targetRoot.Position - myRoot.Position).Unit
-		myRoot.AssemblyLinearVelocity = direction * FAKE_SPEED
-	end
-
-	while _G[toggleKey] do
-		local myChar = Player.Character
-		local targetMob = nil
-		local mobsFolder = workspace:FindFirstChild("Mobs")
-		local effects = workspace:FindFirstChild("Effects")
-
-		if mobsFolder and myChar and myChar:FindFirstChild("HumanoidRootPart") then
-			local myRoot = myChar.HumanoidRootPart
-			local validMobs = {}
-
-			-- 1. Gather all alive mobs (excluding Regulus)
-			for _, v in pairs(mobsFolder:GetChildren()) do
-				if v.Name ~= "Regulus" and v:FindFirstChild("HumanoidRootPart") and isEntityAlive(v) then
-					local hp = math.huge
-					if v:FindFirstChild("Health") then
-						hp = v.Health.Value
-					elseif v:FindFirstChild("Humanoid") then
-						hp = v.Humanoid.Health
-					end
-					local dist = (v.HumanoidRootPart.Position - myRoot.Position).Magnitude
-					table.insert(validMobs, {mob = v, hp = hp, dist = dist})
-				end
+			local char = Player.Character
+			if char and char:FindFirstChild("TitanBlades") then
+				pcall(function()
+					local ss = char.TitanBlades:FindFirstChild("SwordScript")
+					if ss and ss:FindFirstChild("ODMDown") then ss.ODMDown:FireServer() end
+					if ss and ss:FindFirstChild("ODMUp") then ss.ODMUp:FireServer() end
+				end)
 			end
 
-			-- 2. Determine if we should throttle
-			local shouldThrottle = true
-			if effects then
-				local worldType = effects:FindFirstChild("WorldType")
-				local gate = effects:FindFirstChild("Gate")
+			local direction = (targetRoot.Position - myRoot.Position).Unit
+			myRoot.AssemblyLinearVelocity = direction * FAKE_SPEED
+		end
+
+		while _G[toggleKey] do
+			local myChar = Player.Character
+			local targetMob = nil
+			local mobsFolder = workspace:FindFirstChild("Mobs")
+			local effects = workspace:FindFirstChild("Effects")
+
+			if mobsFolder and myChar and myChar:FindFirstChild("HumanoidRootPart") then
+				local myRoot = myChar.HumanoidRootPart
+				local validMobs = {}
+
+				-- Clean up deleted mobs from our age tracker to prevent memory leaks
+				for m, _ in pairs(mobAges) do
+					if not m:IsDescendantOf(workspace) then
+						mobAges[m] = nil
+					end
+				end
+
+				-- Gather all alive mobs and track their spawn time
+				for _, v in pairs(mobsFolder:GetChildren()) do
+					if v.Name ~= "Regulus" and v:FindFirstChild("HumanoidRootPart") and isEntityAlive(v) then
+						if not mobAges[v] then
+							mobAges[v] = tick() -- Mark the exact moment we first saw this mob
+						end
+						table.insert(validMobs, {mob = v, age = mobAges[v]})
+					end
+				end
+
+				-- Determine if we should throttle
+				local shouldThrottle = true
+				local isGateFinished = false
 				
-				if worldType and worldType.Value == "Gate" and gate then
-					local totalMobs = gate:FindFirstChild("TotalMobs")
-					local mobsDefeated = gate:FindFirstChild("MobsDefeated")
+				if effects then
+					local worldType = effects:FindFirstChild("WorldType")
+					local gate = effects:FindFirstChild("Gate")
 					
-					if totalMobs and mobsDefeated then
-						local remainingToDefeat = totalMobs.Value - mobsDefeated.Value
+					if worldType and worldType.Value == "Gate" and gate then
+						local totalMobs = gate:FindFirstChild("TotalMobs")
+						local mobsDefeated = gate:FindFirstChild("MobsDefeated")
 						
-						-- STRICT OVERRIDE: 
-						-- ONLY stop throttling if the mobs currently alive on the map 
-						-- are enough to finish the entire gate. No hardcoded numbers.
-						if remainingToDefeat <= #validMobs then
-							shouldThrottle = false
+						if totalMobs and mobsDefeated then
+							local remainingToDefeat = totalMobs.Value - mobsDefeated.Value
+							
+							if remainingToDefeat <= #validMobs then
+								shouldThrottle = false
+							end
+							if remainingToDefeat <= 0 then
+								isGateFinished = true
+							end
 						end
 					end
 				end
-			end
 
-			-- 3. Select Target
-			if #validMobs > 0 then
-				if shouldThrottle then
-					-- MULTI-HIT PROTECTION: Keep a massive buffer of 4 mobs alive.
-					-- Only attack if there are 5 or more mobs on the field.
-					if #validMobs > 4 then
-						table.sort(validMobs, function(a, b) return a.dist < b.dist end)
-						targetMob = validMobs[1].mob
+				-- Select Target Logic
+				if #validMobs > 0 and not isGateFinished then
+					if shouldThrottle then
+						-- Lowered buffer: Wait until at least 2 mobs exist. 
+						-- This leaves 1 alive to keep the spawner from breaking.
+						if #validMobs >= 2 then
+							-- Sort by age (smallest tick = oldest mob)
+							table.sort(validMobs, function(a, b) return a.age < b.age end)
+							targetMob = validMobs[1].mob
+						else
+							targetMob = nil 
+						end
 					else
-						-- 4 or fewer mobs? Do nothing. Let them spawn safely.
-						targetMob = nil 
+						-- Final wipe: prioritize oldest just in case
+						table.sort(validMobs, function(a, b) return a.age < b.age end)
+						targetMob = validMobs[1].mob
 					end
-				else
-					-- Final wipe: We have enough mobs on the field to finish the gate.
-					table.sort(validMobs, function(a, b) return a.dist < b.dist end)
-					targetMob = validMobs[1].mob
 				end
 			end
-		end -- THIS WAS THE MISSING END
 
-		if targetMob then
-			local cam = workspace.CurrentCamera
-			local camConn
-			if cam then
-				cam.CameraType = Enum.CameraType.Scriptable
-				camConn = RunService.RenderStepped:Connect(function()
-					if targetMob and targetMob:FindFirstChild("HumanoidRootPart") then
-						local tPos = targetMob.HumanoidRootPart.Position
-						cam.CFrame = CFrame.lookAt(tPos + Vector3.new(0, 30, 40), tPos)
-					end
-				end)
-			end
-
-			local lastHRFire = 0
-			local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
-
-			while _G[toggleKey] and isEntityAlive(targetMob) and myChar and myChar:FindFirstChild("HumanoidRootPart") do
-				myRoot = myChar.HumanoidRootPart
-				if tick() - lastHRFire >= 1 then
-					triggerHeavenlyRestriction()
-					lastHRFire = tick()
+			if targetMob then
+				local cam = workspace.CurrentCamera
+				local camConn
+				if cam then
+					cam.CameraType = Enum.CameraType.Scriptable
+					camConn = RunService.RenderStepped:Connect(function()
+						if targetMob and targetMob:FindFirstChild("HumanoidRootPart") then
+							local tPos = targetMob.HumanoidRootPart.Position
+							cam.CFrame = CFrame.lookAt(tPos + Vector3.new(0, 30, 40), tPos)
+						end
+					end)
 				end
 
-				local targetRoot = targetMob:FindFirstChild("HumanoidRootPart")
-				if not targetRoot then break end
+				local lastHRFire = 0
+				local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
 
-				myRoot.CFrame = targetRoot.CFrame * CFrame.new(0, PULLBACK_DISTANCE, PULLBACK_DISTANCE)
-				local strikeCFrame = targetRoot.CFrame * CFrame.new(0, 0, -3)
-				local dashTween = TweenService:Create(myRoot, TweenInfo.new(DASH_TIME, Enum.EasingStyle.Linear), {CFrame = strikeCFrame})
-
-				dashTween:Play()
-
-				task.delay(DASH_TIME * FIRE_PERCENT, function()
-					if _G[toggleKey] and myRoot and targetRoot and isEntityAlive(targetMob) then
-						pcall(function() fireODMRemotes(myRoot, targetRoot) end)
+				while _G[toggleKey] and isEntityAlive(targetMob) and myChar and myChar:FindFirstChild("HumanoidRootPart") do
+					myRoot = myChar.HumanoidRootPart
+					if tick() - lastHRFire >= 1 then
+						triggerHeavenlyRestriction()
+						lastHRFire = tick()
 					end
-				end)
 
-				dashTween.Completed:Wait()
+					local targetRoot = targetMob:FindFirstChild("HumanoidRootPart")
+					if not targetRoot then break end
+
+					myRoot.CFrame = targetRoot.CFrame * CFrame.new(0, PULLBACK_DISTANCE, PULLBACK_DISTANCE)
+					local strikeCFrame = targetRoot.CFrame * CFrame.new(0, 0, -3)
+					local dashTween = TweenService:Create(myRoot, TweenInfo.new(DASH_TIME, Enum.EasingStyle.Linear), {CFrame = strikeCFrame})
+
+					dashTween:Play()
+
+					task.delay(DASH_TIME * FIRE_PERCENT, function()
+						if _G[toggleKey] and myRoot and targetRoot and isEntityAlive(targetMob) then
+							pcall(function() fireODMRemotes(myRoot, targetRoot) end)
+						end
+					end)
+
+					dashTween.Completed:Wait()
+					stopMomentum(myRoot)
+					task.wait(LOOP_DELAY)
+				end
+
 				stopMomentum(myRoot)
-				task.wait(LOOP_DELAY)
+				if camConn then camConn:Disconnect() end
+				if cam then cam.CameraType = Enum.CameraType.Custom end
+				
+				lastKillTime = tick() -- Reset the kill timer after a successful combat loop
+			else
+				-- IDLE / WAITING PHASE
+				local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+				if myRoot then
+					stopMomentum(myRoot)
+					-- Teleport to the safe spot while we wait for new spawns
+					if safeCFrame then
+						myRoot.CFrame = safeCFrame
+					end
+				end
 			end
-
-			stopMomentum(myRoot)
-			if camConn then camConn:Disconnect() end
-			if cam then cam.CameraType = Enum.CameraType.Custom end
-		else
-			local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
-			stopMomentum(myRoot)
+			task.wait(0.1)
 		end
-		task.wait(0.1)
-	end
 
-	local finalCam = workspace.CurrentCamera
-	if finalCam then finalCam.CameraType = Enum.CameraType.Custom end
-	restoreOriginalPosition()
-end)
+		local finalCam = workspace.CurrentCamera
+		if finalCam then finalCam.CameraType = Enum.CameraType.Custom end
+		restoreOriginalPosition()
+	end)
 end
 
 local function KillRegulus()
