@@ -4387,7 +4387,7 @@ secMiscCore:CreateDropdown({
 		end
 	end
 })
-if setfpscap then setfpscap(30) end -- Applies the 15 FPS cap on load
+if setfpscap then setfpscap(25) end -- Applies the 15 FPS cap on load
 
 secMiscCore:CreateButton({
 	Name = "Execute Infinite Yield",
