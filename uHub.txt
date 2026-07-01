@@ -2323,11 +2323,11 @@ local function SlingshotKillAll(toggleKey)
 	task.spawn(function()
 		saveOriginalPosition()
 
-		local PULLBACK_DISTANCE = 100
+		local PULLBACK_DISTANCE = 50
 		local DASH_TIME = 0
 		local LOOP_DELAY = 0
 		local FIRE_PERCENT = 1
-		local FAKE_SPEED = 3000
+		local FAKE_SPEED = 9999
 
 		local function fireODMRemotes(myRoot, targetRoot)
 			local playerGui = Player:FindFirstChild("PlayerGui")
