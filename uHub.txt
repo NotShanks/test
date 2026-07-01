@@ -2323,7 +2323,7 @@ local function SlingshotKillAll(toggleKey)
 	task.spawn(function()
 		saveOriginalPosition()
 
-		local PULLBACK_DISTANCE = 50
+		local PULLBACK_DISTANCE = 100
 		local DASH_TIME = 0
 		local LOOP_DELAY = 0
 		local FIRE_PERCENT = 1
