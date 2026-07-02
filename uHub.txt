@@ -1899,6 +1899,8 @@ function Luna:CreateWindow(WindowSettings)
 					Callback = function(Value) end,
 				}, ToggleSettings or {})
 
+				ToggleV.Settings = ToggleSettings -- [NEW]: Attaches settings so callbacks can be fired programmatically!
+
 				local Toggle = (ToggleSettings.Description ~= nil and ToggleSettings.Description ~= "") and Elements.Template.ToggleDesc:Clone() or Elements.Template.Toggle:Clone()
 				Toggle.Visible = true
 				Toggle.Parent = TabPageSection
