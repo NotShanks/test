@@ -2297,8 +2297,10 @@ task.spawn(function()
 							lastHealFire = tick()
 							
 							task.spawn(function()
+								local backpack = Player:FindFirstChild("Backpack")
+
 								-- 1) Cure Meadow
-								pcall(function() char.CureMeadow.ServerScript.Charge:FireServer() end)
+								if backpack then pcall(function() backpack.CureMeadow.ServerScript.Charge:FireServer() end) end
 								task.wait(0.3) -- Delay before next
 								
 								-- 2) Parkour Healer script
@@ -2306,7 +2308,7 @@ task.spawn(function()
 								task.wait(0.3) -- Delay before next
 								
 								-- 3) Latric Reclamation
-								pcall(function() char.LatricReclamation.ServerScript.Charge:FireServer() end)
+								if backpack then pcall(function() backpack.LatricReclamation.ServerScript.Charge:FireServer() end) end
 							end)
 						end
 					end
@@ -2462,43 +2464,70 @@ local function SlingshotKillOverworld(toggleKey)
 			local mobsFolder = workspace:FindFirstChild("Mobs")
 			local effects = workspace:FindFirstChild("Effects")
 
-			local regulus = mobsFolder:FindFirstChild("Regulus")
-
+			-- === REGULUS INTERCEPT LOGIC ===
+			local regulus = mobsFolder and mobsFolder:FindFirstChild("Regulus")
 			if regulus and isEntityAlive(regulus) then
-				-- 1. Pause the Overworld farm
-				_G.AutoAllMobsOverworld = false
 				
-				-- 2. Equip Lightning Axe to backpack, then physically equip it
-				unequipCurrent()
-				task.wait(0.15)
-				ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("BackWeapon"):FireServer("RightWeapon", "LightningAxe", "BackRight", "LightningAxe")
-				task.wait(0.15)
-				loadWeapons()
-				task.wait(0.5)
-				
-				-- Press 4 to equip
-				VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Four, false, game)
-				task.wait(0.1)
-				VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Four, false, game)
-				
-				-- 3. Toggle on Auto Regulus and wait for him to die
-				_G.AutoRegulus = true
-				KillRegulus()
-				
-				while _G.AutoRegulus and isEntityAlive(regulus) do
+				-- Spawn a separate thread to handle the boss sequence
+				task.spawn(function()
+					-- 1. Turn OFF Auto Mobs programmatically (Visually & Functionally)
+					if _G.ToggleAllMobs then
+						_G.ToggleAllMobs:UpdateState(false)
+						_G.ToggleAllMobs.Settings.Callback(false) 
+					end
+					
+					task.wait(0.5) -- Give the old loop a moment to completely stop
+
+					-- 2. Equip Lightning Axe securely
+					unequipCurrent()
+					task.wait(0.15)
+					ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("BackWeapon"):FireServer("RightWeapon", "LightningAxe", "BackRight", "LightningAxe")
+					task.wait(0.15)
+					loadWeapons()
 					task.wait(0.5)
-				end
-				
-				-- 4. Clean up, unequip axe, and resume normal farming
-				_G.AutoRegulus = false
-				VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Four, false, game)
-				task.wait(0.1)
-				VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Four, false, game)
-				
-				_G.AutoAllMobsOverworld = true
-				SlingshotKillOverworld("AutoAllMobsOverworld")
-				return -- Break out of the current iteration to restart the loop fresh
+					
+					-- Try equipping directly via Humanoid first, fallback to VIM
+					local axe = (Player.Character and Player.Character:FindFirstChild("LightningAxe")) or (Player:FindFirstChild("Backpack") and Player.Backpack:FindFirstChild("LightningAxe"))
+					
+					if axe and Player.Character and Player.Character:FindFirstChild("Humanoid") then
+						Player.Character.Humanoid:EquipTool(axe)
+					else
+						VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Four, false, game)
+						task.wait(0.1)
+						VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Four, false, game)
+					end
+					task.wait(0.5)
+
+					-- 3. Turn ON Auto Regulus programmatically
+					if _G.ToggleRegulus then
+						_G.ToggleRegulus:UpdateState(true)
+						_G.ToggleRegulus.Settings.Callback(true) -- This starts KillRegulus() safely
+					end
+
+					-- 4. Wait until Regulus is dead or despawns
+					while _G.AutoRegulus and regulus:IsDescendantOf(workspace) and isEntityAlive(regulus) do
+						task.wait(0.5)
+					end
+
+					-- 5. Turn OFF Auto Regulus
+					if _G.ToggleRegulus then
+						_G.ToggleRegulus:UpdateState(false)
+						_G.ToggleRegulus.Settings.Callback(false)
+					end
+
+					task.wait(0.5)
+
+					-- 6. Turn Auto Mobs back ON (This automatically re-equips Titan Blades and restarts the farm)
+					if _G.ToggleAllMobs then
+						_G.ToggleAllMobs:UpdateState(true)
+						_G.ToggleAllMobs.Settings.Callback(true)
+					end
+				end)
+
+				-- Terminate the current Slingshot thread so it doesn't fight the Regulus thread!
+				return 
 			end
+			-- ===============================
 
 			if mobsFolder and myChar and myChar:FindFirstChild("HumanoidRootPart") then
 				local myRoot = myChar.HumanoidRootPart
@@ -2768,8 +2797,13 @@ local function GrandOreFarm()
 							
 							-- Spam heals continuously while mining to sustain Frenzy
 							if hp < maxHp then
+								local backpack = Player:FindFirstChild("Backpack")
 								pcall(function() ReplicatedStorage.Remotes.Ambrosia:FireServer() end)
-								pcall(function() char.CureMeadow.ServerScript.Charge:FireServer() end)
+								pcall(function() ReplicatedStorage.Remotes.IchorChalice:FireServer() end)
+								if backpack then
+									pcall(function() backpack.CureMeadow.ServerScript.Charge:FireServer() end)
+									pcall(function() backpack.LatricReclamation.ServerScript.Charge:FireServer() end)
+								end
 							end
 							
 							-- Fire Frenzy only if HP is 40% or higher
@@ -4091,7 +4125,7 @@ secMarkers:CreateButton({
 
 local secCombatGates = tabGates:CreateSection("Combat Farm Automation")
 
-secCombatGates:CreateToggle({
+_G.ToggleAllMobs = secCombatGates:CreateToggle({
 	Name = "Auto All Mobs [Throttled]",
 	Description = "Farms mobs but keeps the 2 weakest alive to prevent despawn breaks.",
 	CurrentValue = false,
@@ -4150,7 +4184,7 @@ secCombatGates:CreateButton({
 	end
 })
 
-secCombatGates:CreateToggle({
+_G.ToggleRegulus = secCombatGates:CreateToggle({
 	Name = "Auto Regulus Boss",
 	Description = "Automatically target and kill Regulus boss.",
 	CurrentValue = false,
