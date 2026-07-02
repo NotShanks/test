@@ -2323,7 +2323,7 @@ local function SlingshotKillAll(toggleKey)
 	task.spawn(function()
 		saveOriginalPosition()
 
-		local PULLBACK_DISTANCE = 100
+		local PULLBACK_DISTANCE = 50
 		local DASH_TIME = 0
 		local LOOP_DELAY = 0
 		local FIRE_PERCENT = 1
@@ -2461,6 +2461,44 @@ local function SlingshotKillOverworld(toggleKey)
 			local targetMob = nil
 			local mobsFolder = workspace:FindFirstChild("Mobs")
 			local effects = workspace:FindFirstChild("Effects")
+
+			local regulus = mobsFolder:FindFirstChild("Regulus")
+
+			if regulus and isEntityAlive(regulus) then
+				-- 1. Pause the Overworld farm
+				_G.AutoAllMobsOverworld = false
+				
+				-- 2. Equip Lightning Axe to backpack, then physically equip it
+				unequipCurrent()
+				task.wait(0.15)
+				ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("BackWeapon"):FireServer("RightWeapon", "LightningAxe", "BackRight", "LightningAxe")
+				task.wait(0.15)
+				loadWeapons()
+				task.wait(0.5)
+				
+				-- Press 4 to equip
+				VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Four, false, game)
+				task.wait(0.1)
+				VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Four, false, game)
+				
+				-- 3. Toggle on Auto Regulus and wait for him to die
+				_G.AutoRegulus = true
+				KillRegulus()
+				
+				while _G.AutoRegulus and isEntityAlive(regulus) do
+					task.wait(0.5)
+				end
+				
+				-- 4. Clean up, unequip axe, and resume normal farming
+				_G.AutoRegulus = false
+				VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Four, false, game)
+				task.wait(0.1)
+				VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Four, false, game)
+				
+				_G.AutoAllMobsOverworld = true
+				SlingshotKillOverworld("AutoAllMobsOverworld")
+				return -- Break out of the current iteration to restart the loop fresh
+			end
 
 			if mobsFolder and myChar and myChar:FindFirstChild("HumanoidRootPart") then
 				local myRoot = myChar.HumanoidRootPart
@@ -2718,33 +2756,37 @@ local isMining = false
 local function GrandOreFarm()
 	task.spawn(function()
 		task.spawn(function()
-			while _G.AutoGrandOre do
-				pcall(function()
-					local character = Player.Character
-					local healthValue = character and character:FindFirstChild("Health")
-					
-					if isMining and healthValue and healthValue:IsA("ValueBase") and healthValue.Value > 7000 then
-						local playerGui = Player:FindFirstChild("PlayerGui")
-						local frenzyRemote = playerGui and playerGui:FindFirstChild("Parkour") and playerGui.Parkour:FindFirstChild("Script") and playerGui.Parkour.Script:FindFirstChild("FrenzyPickaxe")
+				while _G.AutoGrandOre do
+					pcall(function()
+						local char = Player.Character
+						local healthValue = char and char:FindFirstChild("Health")
+						local maxHealthValue = char and char:FindFirstChild("MaxHealth")
 						
-						if frenzyRemote then
-							local startHealth = healthValue.Value
-							frenzyRemote:FireServer()
+						if isMining and healthValue and maxHealthValue then
+							local hp = healthValue.Value
+							local maxHp = maxHealthValue.Value
 							
-							task.wait(0.5) 
-							if healthValue.Value >= startHealth then
-								task.wait(1) 
-							else
-								task.wait(5) 
+							-- Spam heals continuously while mining to sustain Frenzy
+							if hp < maxHp then
+								pcall(function() ReplicatedStorage.Remotes.Ambrosia:FireServer() end)
+								pcall(function() char.CureMeadow.ServerScript.Charge:FireServer() end)
+							end
+							
+							-- Fire Frenzy only if HP is 40% or higher
+							if (hp / maxHp) >= 0.40 then
+								local playerGui = Player:FindFirstChild("PlayerGui")
+								local frenzyRemote = playerGui and playerGui:FindFirstChild("Parkour") and playerGui.Parkour:FindFirstChild("Script") and playerGui.Parkour.Script:FindFirstChild("FrenzyPickaxe")
+								
+								if frenzyRemote then
+									frenzyRemote:FireServer()
+								end
 							end
 						end
-					else
-						task.wait(0.5) 
-					end
-				end)
-				task.wait()
-			end
-		end)
+					end)
+					-- Wait 1 second to match the cooldown reduction tick rate
+					task.wait(1)
+				end
+			end)
 
 		while _G.AutoGrandOre do 
 			local foundOre = false
@@ -2818,13 +2860,17 @@ local function GrandOreFarm()
 						local stuckTimer = tick()
 
 						repeat 
-							local pickaxe = getPickaxe(character)
-							if pickaxe then
-								local scriptObj = pickaxe:FindFirstChild("SwordScript")
-								if scriptObj and scriptObj:FindFirstChild("Activate") then
-									scriptObj.Activate:FireServer()
+							-- Only swing if we are within 15 studs of the ore part
+							if hrp and targetPart and (hrp.Position - targetPart.Position).Magnitude <= 15 then
+								local pickaxe = getPickaxe(character)
+								if pickaxe then
+									local scriptObj = pickaxe:FindFirstChild("SwordScript")
+									if scriptObj and scriptObj:FindFirstChild("Activate") then
+										scriptObj.Activate:FireServer()
+									end
 								end
 							end
+							
 							task.wait(0.1) 
 							
 							if tick() - stuckTimer >= 2 then
@@ -3985,29 +4031,21 @@ local initialOres = 0
 local initialChests = 0
 
 task.spawn(function()
-	while task.wait(0.5) do
-		pcall(function()
-			if _G.AutoGrandOre then
-				if initialOres == 0 then
-					initialOres = countGrandOres()
-				end
-				_G.GrandOresLeft = countGrandOres()
-				lblOres:Set("Ores: " .. tostring(_G.GrandOresLeft) .. " / " .. tostring(initialOres))
-			else
-				initialOres = 0
-			end
+    while task.wait(0.5) do
+        pcall(function()
+            -- Always count ores
+            local currentOres = countGrandOres()
+            if currentOres > initialOres then initialOres = currentOres end
+            _G.GrandOresLeft = currentOres
+            lblOres:Set("Ores: " .. tostring(_G.GrandOresLeft) .. " / " .. tostring(initialOres))
 
-			if _G.AutoTreasure or _G.AutoDungeon then
-				if initialChests == 0 then
-					initialChests = countChests()
-				end
-				_G.ChestsLeft = countChests()
-				lblChests:Set("Chests: " .. tostring(_G.ChestsLeft) .. " / " .. tostring(initialChests))
-			else
-				initialChests = 0
-			end
-		end)
-	end
+            -- Always count chests
+            local currentChests = countChests()
+            if currentChests > initialChests then initialChests = currentChests end
+            _G.ChestsLeft = currentChests
+            lblChests:Set("Chests: " .. tostring(_G.ChestsLeft) .. " / " .. tostring(initialChests))
+        end)
+    end
 end)
 
 local secMarkers = tabGates:CreateSection("Dynamic Markers Navigation")
@@ -4387,7 +4425,7 @@ secMiscCore:CreateDropdown({
 		end
 	end
 })
-if setfpscap then setfpscap(25) end -- Applies the 15 FPS cap on load
+if setfpscap then setfpscap(30) end -- Applies the 15 FPS cap on load
 
 secMiscCore:CreateButton({
 	Name = "Execute Infinite Yield",
