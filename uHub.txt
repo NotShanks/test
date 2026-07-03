@@ -1401,7 +1401,55 @@ function Luna:CreateWindow(WindowSettings)
 			if srv:FindFirstChild("MaxPlayers") then srv.MaxPlayers.Visible = false end
 			if srv:FindFirstChild("Latency") then srv.Latency.Visible = false end
 			if srv:FindFirstChild("Region") then srv.Region.Visible = false end
-			if srv:FindFirstChild("Join") then srv.Join.Visible = false end -- Hides the Join Script card
+			if srv:FindFirstChild("Join") then
+				local joinCard = srv.Join
+				joinCard.Visible = true
+				configureCard(joinCard, "Server Hop", "Click to transition to another server", "6023426921", Color3.fromRGB(123, 201, 201))
+				
+				joinCard.Interact.MouseButton1Click:Connect(function()
+					local TeleportService = game:GetService("TeleportService")
+					local PlaceId = game.PlaceId
+					local JobId = game.JobId
+					
+					Luna:Notification({
+						Title = "Server Router", 
+						Content = "Searching for active public instances...", 
+						Icon = "autorenew"
+					})
+					
+					local success, result = pcall(function()
+						local servers = {}
+						local req = game:HttpGet("https://games.roblox.com/v1/games/" .. PlaceId .. "/servers/Public?sortOrder=Desc&limit=100&excludeFullGames=true")
+						local body = HttpService:JSONDecode(req)
+
+						if body and body.data then
+							for i, v in next, body.data do
+								if type(v) == "table" and tonumber(v.playing) and tonumber(v.maxPlayers) and v.playing < v.maxPlayers and v.id ~= JobId then
+									table.insert(servers, 1, v.id)
+								end
+							end
+						end
+
+						if #servers > 0 then
+							TeleportService:TeleportToPlaceInstance(PlaceId, servers[math.random(1, #servers)], Player)
+						else
+							Luna:Notification({
+								Title = "Server Router", 
+								Content = "Could not identify any suitable server candidates.", 
+								Icon = "warning"
+							})
+						end
+					end)
+					
+					if not success then
+						Luna:Notification({
+							Title = "Server Router", 
+							Content = "Failed to communicate with server list API.", 
+							Icon = "warning"
+						})
+					end
+				end)
+			end
 			
 			if srv:FindFirstChild("Players") then
 				configureCard(srv.Players, "Season Timer", "", nil, nil)
@@ -4014,6 +4062,88 @@ secRuinsCore:CreateToggle({
 			resetWalkSpeed()
 		end
 	end
+})
+
+local bypassWarning = false
+local lastClickTime = 0
+
+local function isPlayerNearby(radius)
+    local myChar = Player.Character
+    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+    if not myRoot then return false end
+    
+    for _, otherPlayer in pairs(Players:GetPlayers()) do
+        if otherPlayer ~= Player then
+            local otherChar = otherPlayer.Character
+            local otherRoot = otherChar and otherChar:FindFirstChild("HumanoidRootPart")
+            if otherRoot then
+                local dist = (otherRoot.Position - myRoot.Position).Magnitude
+                if dist <= radius then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+secRuinsCore:CreateButton({
+    Name = "Teleport to KingsRuins",
+    Description = "Safely transit high above the ruins and let physics drop you down.",
+    Callback = function()
+        local targetModel = workspace:FindFirstChild("KingsRuinsTeleport")
+        if not targetModel then
+            Luna:Notification({
+                Title = "Kings Ruins", 
+                Content = "KingsRuinsTeleport model was not found in the workspace.", 
+                Icon = "warning"
+            })
+            return
+        end
+        
+        local char = Player.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+        
+        local now = tick()
+        local playerNear = isPlayerNearby(150)
+        
+        if playerNear then
+            if not bypassWarning or (now - lastClickTime > 10) then
+                bypassWarning = true
+                lastClickTime = now
+                Luna:Notification({
+                    Title = "Safety Warning",
+                    Content = "Another player is nearby! Click the button again within 10 seconds to bypass safety.",
+                    Icon = "warning"
+                })
+                return
+            end
+        end
+        
+        -- Reset warning state on successful bypass or safe teleport
+        bypassWarning = false
+        
+        local targetPos = targetModel:GetPivot().Position
+        local currentPos = hrp.Position
+        
+        -- Elevate vertically first to prevent clipping boundaries
+        hrp.CFrame = CFrame.new(currentPos.X, targetPos.Y + 200, currentPos.Z)
+        task.wait(0.1)
+        
+        -- Snap to target X/Z coordinates at high altitude
+        hrp.CFrame = CFrame.new(targetPos.X, targetPos.Y + 200, targetPos.Z)
+        task.wait(0.05)
+        
+        -- Neutralize vertical velocity to drop directly down
+        stopMomentum(hrp)
+        
+        Luna:Notification({
+            Title = "Teleport",
+            Content = "Positioned high above Kings Ruins. Drop sequence active.",
+            Icon = "check_circle_outline"
+        })
+    end
 })
 
 secRuinsCore:CreateButton({
