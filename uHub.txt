@@ -1396,17 +1396,27 @@ function Luna:CreateWindow(WindowSettings)
 			end
 		end
 
-		if db:FindFirstChild("Server") then
-			local srv = db.Server
-			if srv:FindFirstChild("MaxPlayers") then srv.MaxPlayers.Visible = false end
-			if srv:FindFirstChild("Latency") then srv.Latency.Visible = false end
-			if srv:FindFirstChild("Region") then srv.Region.Visible = false end
-			if srv:FindFirstChild("Join") then
-				local joinCard = srv.Join
-				joinCard.Visible = true
-				configureCard(joinCard, "Server Hop", "Click to transition to another server", "6023426921", Color3.fromRGB(123, 201, 201))
-				
-				joinCard.Interact.MouseButton1Click:Connect(function()
+		-- Helper function to transform the card once found
+		local function transformToServerHop(card)
+			if not card then return end
+			card.Visible = true
+			
+			-- Dynamically locate text and image elements inside the card
+			local title = card:FindFirstChild("Title") or card:FindFirstChild("Title", true)
+			local value = card:FindFirstChild("Value") or card:FindFirstChild("Value", true) or card:FindFirstChild("Desc") or card:FindFirstChild("Desc", true)
+			local icon = card:FindFirstChild("Icon") or card:FindFirstChild("Icon", true) or card:FindFirstChildWhichIsA("ImageLabel", true)
+			
+			if title then title.Text = "Server Hop" end
+			if value then value.Text = "Click to transition to another server" end
+			if icon then
+				icon.Image = "rbxassetid://6023426921" -- Autorenew icon
+				icon.ImageColor3 = Color3.fromRGB(123, 201, 201)
+			end
+			
+			-- Connect the click interaction
+			local interact = card:FindFirstChild("Interact") or card:FindFirstChildWhichIsA("GuiButton", true) or card
+			if interact then
+				interact.MouseButton1Click:Connect(function()
 					local TeleportService = game:GetService("TeleportService")
 					local PlaceId = game.PlaceId
 					local JobId = game.JobId
@@ -1450,8 +1460,39 @@ function Luna:CreateWindow(WindowSettings)
 					end
 				end)
 			end
+		end
+
+		if db:FindFirstChild("Server") then
+			local srv = db.Server
+			if srv:FindFirstChild("MaxPlayers") then srv.MaxPlayers.Visible = false end
+			if srv:FindFirstChild("Latency") then srv.Latency.Visible = false end
+			if srv:FindFirstChild("Region") then srv.Region.Visible = false end
 			
-			if srv:FindFirstChild("Players") then
+			-- Scan srv (Server) and db (Dashboard) folders dynamically for the card
+			local joinCard = srv:FindFirstChild("Join") or srv:FindFirstChild("JoinScript") or db:FindFirstChild("Join") or db:FindFirstChild("JoinScript")
+			if not joinCard then
+				local containers = {srv, db}
+				for _, container in ipairs(containers) do
+					if container then
+						for _, child in pairs(container:GetChildren()) do
+							for _, desc in pairs(child:GetDescendants()) do
+								if desc:IsA("TextLabel") and (string.find(desc.Text:lower(), "join") or string.find(desc.Text:lower(), "copy")) then
+									joinCard = child
+									break
+								end
+							end
+							if joinCard then break end
+						end
+					end
+					if joinCard then break end
+				end
+			end
+
+			if joinCard then
+				transformToServerHop(joinCard)
+			end
+	
+	if srv:FindFirstChild("Players") then
 				configureCard(srv.Players, "Season Timer", "", nil, nil)
 				srv.Players.Visible = true
 				pcall(function()
@@ -4106,7 +4147,7 @@ secRuinsCore:CreateButton({
         if not hrp then return end
         
         local now = tick()
-        local playerNear = isPlayerNearby(150)
+        local playerNear = isPlayerNearby(300)
         
         if playerNear then
             if not bypassWarning or (now - lastClickTime > 10) then
@@ -4128,11 +4169,11 @@ secRuinsCore:CreateButton({
         local currentPos = hrp.Position
         
         -- Elevate vertically first to prevent clipping boundaries
-        hrp.CFrame = CFrame.new(currentPos.X, targetPos.Y + 200, currentPos.Z)
+        hrp.CFrame = CFrame.new(currentPos.X, targetPos.Y + 500, currentPos.Z)
         task.wait(0.1)
         
         -- Snap to target X/Z coordinates at high altitude
-        hrp.CFrame = CFrame.new(targetPos.X, targetPos.Y + 200, targetPos.Z)
+        hrp.CFrame = CFrame.new(targetPos.X, targetPos.Y + 500, targetPos.Z)
         task.wait(0.05)
         
         -- Neutralize vertical velocity to drop directly down
