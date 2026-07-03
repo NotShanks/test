@@ -1402,20 +1402,22 @@ function Luna:CreateWindow(WindowSettings)
 			card.Visible = true
 			
 			-- Dynamically locate text and image elements inside the card
-			local title = card:FindFirstChild("Title") or card:FindFirstChild("Title", true)
-			local value = card:FindFirstChild("Value") or card:FindFirstChild("Value", true) or card:FindFirstChild("Desc") or card:FindFirstChild("Desc", true)
-			local icon = card:FindFirstChild("Icon") or card:FindFirstChild("Icon", true) or card:FindFirstChildWhichIsA("ImageLabel", true)
-			
-			if title then title.Text = "Server Hop" end
-			if value then value.Text = "Click to transition to another server" end
-			if icon then
-				icon.Image = "rbxassetid://6023426921" -- Autorenew icon
-				icon.ImageColor3 = Color3.fromRGB(123, 201, 201)
+			for _, child in pairs(card:GetDescendants()) do
+				if child:IsA("TextLabel") then
+					if child.Text == "Join Script" or string.find(child.Text:lower(), "join") then
+						child.Text = "Server Hop"
+					elseif child.Text == "Tap to copy join script" or string.find(child.Text:lower(), "copy") or string.find(child.Text:lower(), "tap") then
+						child.Text = "Click to transition to another server"
+					end
+				elseif child:IsA("ImageLabel") then
+					child.Image = "rbxassetid://6023426921" -- Autorenew icon
+					child.ImageColor3 = Color3.fromRGB(123, 201, 201)
+				end
 			end
 			
 			-- Connect the click interaction
-			local interact = card:FindFirstChild("Interact") or card:FindFirstChildWhichIsA("GuiButton", true) or card
-			if interact then
+			local interact = card:FindFirstChild("Interact") or card:FindFirstChildWhichIsA("GuiButton", true)
+			if interact and interact:IsA("GuiButton") then
 				interact.MouseButton1Click:Connect(function()
 					local TeleportService = game:GetService("TeleportService")
 					local PlaceId = game.PlaceId
@@ -1468,29 +1470,34 @@ function Luna:CreateWindow(WindowSettings)
 			if srv:FindFirstChild("Latency") then srv.Latency.Visible = false end
 			if srv:FindFirstChild("Region") then srv.Region.Visible = false end
 			
-			-- Scan srv (Server) and db (Dashboard) folders dynamically for the card
-			local joinCard = srv:FindFirstChild("Join") or srv:FindFirstChild("JoinScript") or db:FindFirstChild("Join") or db:FindFirstChild("JoinScript")
-			if not joinCard then
-				local containers = {srv, db}
-				for _, container in ipairs(containers) do
-					if container then
-						for _, child in pairs(container:GetChildren()) do
-							for _, desc in pairs(child:GetDescendants()) do
-								if desc:IsA("TextLabel") and (string.find(desc.Text:lower(), "join") or string.find(desc.Text:lower(), "copy")) then
-									joinCard = child
-									break
+			-- Run with a brief delay to ensure UI elements are completely loaded and rendered
+			task.spawn(function()
+				task.wait(1)
+				
+				-- Scan srv (Server) and db (Dashboard) folders dynamically for the card with precise string matching
+				local joinCard = srv:FindFirstChild("Join") or srv:FindFirstChild("JoinScript") or db:FindFirstChild("Join") or db:FindFirstChild("JoinScript")
+				if not joinCard then
+					local containers = {srv, db}
+					for _, container in ipairs(containers) do
+						if container then
+							for _, child in pairs(container:GetChildren()) do
+								for _, desc in pairs(child:GetDescendants()) do
+									if desc:IsA("TextLabel") and (string.find(desc.Text:lower(), "join script") or string.find(desc.Text:lower(), "copy join")) then
+										joinCard = child
+										break
+									end
 								end
+								if joinCard then break end
 							end
-							if joinCard then break end
 						end
+						if joinCard then break end
 					end
-					if joinCard then break end
 				end
-			end
 
-			if joinCard then
-				transformToServerHop(joinCard)
-			end
+				if joinCard then
+					transformToServerHop(joinCard)
+				end
+			end)
 	
 	if srv:FindFirstChild("Players") then
 				configureCard(srv.Players, "Season Timer", "", nil, nil)
@@ -1515,6 +1522,12 @@ function Luna:CreateWindow(WindowSettings)
 			local fnd = db.Friends
 			configureCard(fnd, "Active Gates", "Currently discovered portals", nil, nil)
 			fnd.Visible = true
+			
+			if fnd:FindFirstChild("All") then fnd.All.Name = "Gate1" end
+			if fnd:FindFirstChild("Offline") then fnd.Offline.Name = "Gate2" end
+			if fnd:FindFirstChild("Online") then fnd.Online.Name = "Gate3" end
+			if fnd:FindFirstChild("InGame") then fnd.InGame.Name = "Gate4" end
+			
 			pcall(function()
 				fnd.Size = UDim2.new(0, 250, 0, 250) -- Extends the Active Gates container upwards/downwards
 			end)
@@ -1543,10 +1556,10 @@ function Luna:CreateWindow(WindowSettings)
 			end
 			
 			local cards = {
-				friendsFrame:FindFirstChild("All"),
-				friendsFrame:FindFirstChild("Offline"),
-				friendsFrame:FindFirstChild("Online"),
-				friendsFrame:FindFirstChild("InGame")
+				friendsFrame:FindFirstChild("Gate1"),
+				friendsFrame:FindFirstChild("Gate2"),
+				friendsFrame:FindFirstChild("Gate3"),
+				friendsFrame:FindFirstChild("Gate4")
 			}
 			
 			for i, card in ipairs(cards) do
@@ -4108,18 +4121,23 @@ secRuinsCore:CreateToggle({
 local bypassWarning = false
 local lastClickTime = 0
 
-local function isPlayerNearby(radius)
+local function isPlayerNearDepartureOrArrival(targetPos, radius)
     local myChar = Player.Character
     local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
     if not myRoot then return false end
+    
+    local currentPos = myRoot.Position
     
     for _, otherPlayer in pairs(Players:GetPlayers()) do
         if otherPlayer ~= Player then
             local otherChar = otherPlayer.Character
             local otherRoot = otherChar and otherChar:FindFirstChild("HumanoidRootPart")
             if otherRoot then
-                local dist = (otherRoot.Position - myRoot.Position).Magnitude
-                if dist <= radius then
+                local otherPos = otherRoot.Position
+                local distToMe = (otherPos - currentPos).Magnitude
+                local distToArrival = (otherPos - targetPos).Magnitude
+                
+                if distToMe <= radius or distToArrival <= radius then
                     return true
                 end
             end
@@ -4130,13 +4148,13 @@ end
 
 secRuinsCore:CreateButton({
     Name = "Teleport to KingsRuins",
-    Description = "Safely transit high above the ruins and let physics drop you down.",
+    Description = "Tween 400 studs high and fall naturally onto Kings Ruins.",
     Callback = function()
         local targetModel = workspace:FindFirstChild("KingsRuinsTeleport")
         if not targetModel then
             Luna:Notification({
                 Title = "Kings Ruins", 
-                Content = "KingsRuinsTeleport model was not found in the workspace.", 
+                Content = "KingsRuinsTeleport target not found in workspace.", 
                 Icon = "warning"
             })
             return
@@ -4146,44 +4164,70 @@ secRuinsCore:CreateButton({
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
         if not hrp then return end
         
+        local targetPos = targetModel:GetPivot().Position
         local now = tick()
-        local playerNear = isPlayerNearby(300)
+        
+        -- Run safety scan with an expanded 250-stud radius
+        local playerNear = isPlayerNearDepartureOrArrival(targetPos, 250)
         
         if playerNear then
             if not bypassWarning or (now - lastClickTime > 10) then
                 bypassWarning = true
                 lastClickTime = now
                 Luna:Notification({
-                    Title = "Safety Warning",
-                    Content = "Another player is nearby! Click the button again within 10 seconds to bypass safety.",
+                    Title = "Safety Alert",
+                    Content = "Another player is nearby! Click again within 10 seconds to force the tween.",
                     Icon = "warning"
                 })
                 return
             end
         end
         
-        -- Reset warning state on successful bypass or safe teleport
         bypassWarning = false
         
-        local targetPos = targetModel:GetPivot().Position
-        local currentPos = hrp.Position
-        
-        -- Elevate vertically first to prevent clipping boundaries
-        hrp.CFrame = CFrame.new(currentPos.X, targetPos.Y + 500, currentPos.Z)
-        task.wait(0.1)
-        
-        -- Snap to target X/Z coordinates at high altitude
-        hrp.CFrame = CFrame.new(targetPos.X, targetPos.Y + 500, targetPos.Z)
-        task.wait(0.05)
-        
-        -- Neutralize vertical velocity to drop directly down
-        stopMomentum(hrp)
-        
-        Luna:Notification({
-            Title = "Teleport",
-            Content = "Positioned high above Kings Ruins. Drop sequence active.",
-            Icon = "check_circle_outline"
-        })
+        task.spawn(function()
+            -- Temporary collision bypass to prevent physics snags during vertical movement
+            local noclipConn = RunService.Stepped:Connect(function()
+                if char then
+                    for _, p in pairs(char:GetDescendants()) do
+                        if p:IsA("BasePart") then
+                            p.CanCollide = false
+                        end
+                    end
+                end
+            end)
+            
+            local startPos = hrp.Position
+            local peakY = math.max(startPos.Y, targetPos.Y) + 400
+            
+            -- Stage 1: Tween straight up to peak altitude
+            local upCFrame = CFrame.new(startPos.X, peakY, startPos.Z)
+            local distUp = math.abs(peakY - startPos.Y)
+            local timeUp = distUp / 200 -- speed: 200 studs/sec
+            
+            local upTween = TweenService:Create(hrp, TweenInfo.new(timeUp, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {CFrame = upCFrame})
+            upTween:Play()
+            upTween.Completed:Wait()
+            
+            -- Stage 2: Tween horizontally across the sky
+            local targetHighCFrame = CFrame.new(targetPos.X, peakY, targetPos.Z)
+            local distHorizontal = (Vector3.new(targetPos.X, 0, targetPos.Z) - Vector3.new(startPos.X, 0, startPos.Z)).Magnitude
+            local timeHorizontal = distHorizontal / 300 -- speed: 300 studs/sec
+            
+            local horizTween = TweenService:Create(hrp, TweenInfo.new(timeHorizontal, Enum.EasingStyle.Linear), {CFrame = targetHighCFrame})
+            horizTween:Play()
+            horizTween.Completed:Wait()
+            
+            -- Clean up and let the engine drop you naturally
+            noclipConn:Disconnect()
+            stopMomentum(hrp)
+            
+            Luna:Notification({
+                Title = "Teleport",
+                Content = "Arrived above Kings Ruins. Drop sequence active.",
+                Icon = "check_circle_outline"
+            })
+        end)
     end
 })
 
