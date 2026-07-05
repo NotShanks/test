@@ -1,4 +1,3 @@
-```lua
 --[[
 	Luna Interface Suite & Utility Hub Combined Execution Script
 	Optimized for Advanced Combat Farms and Master Dungeon Automation
