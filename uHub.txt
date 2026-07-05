@@ -4516,13 +4516,13 @@ local function handleVisualRadius(enable)
 			end
 
 			-- Zone 1: Core Sightline / Nameplate Range
-			createZone("Core", 45, Color3.fromRGB(255, 0, 0), 0.7)
+			createZone("Core", 75, Color3.fromRGB(255, 0, 0), 0.7)
 			
 			-- Zone 2: Danger / Approaching Sprint Range
-			createZone("Mid", 130, Color3.fromRGB(255, 128, 0), 0.85)
+			createZone("Mid", 180, Color3.fromRGB(255, 128, 0), 0.85)
 			
 			-- Zone 3: Radar / Peripheral Entry
-			createZone("Outer", 250, Color3.fromRGB(0, 255, 128), 0.93)
+			createZone("Outer", 350, Color3.fromRGB(0, 255, 128), 0.93)
 		end
 	end
 end
@@ -4668,9 +4668,9 @@ local function runKingsRuinsObserver()
 							end
 						else
 							-- Random Stranger Threat Tracking
-							if distance <= 45 then playerInZone1 = true end  -- Danger Close
-							if distance <= 130 then playerInZone2 = true end -- Line of Sight
-							if distance <= 250 then playerInZone3 = true end -- Local Radar
+							if distance <= 75 then playerInZone1 = true end  -- Danger Close
+							if distance <= 180 then playerInZone2 = true end -- Line of Sight
+							if distance <= 350 then playerInZone3 = true end -- Local Radar
 						end
 					end
 				end
