@@ -92,6 +92,32 @@ local function ensureConfigFolder()
 	end
 end
 
+local sharedConfigFileName = folderName .. "/SharedConfig.json" -- Shared Webhook File
+
+local function saveSharedConfig()
+	if writefile then
+		ensureConfigFolder()
+		local data = {
+			DiscordWebhookURL = _G.DiscordWebhookURL
+		}
+		pcall(function()
+			writefile(sharedConfigFileName, HttpService:JSONEncode(data))
+		end)
+	end
+end
+
+local function loadSharedConfig()
+	ensureConfigFolder()
+	if isfile and isfile(sharedConfigFileName) then
+		local success, data = pcall(function()
+			return HttpService:JSONDecode(readfile(sharedConfigFileName))
+		end)
+		if success and data then
+			_G.DiscordWebhookURL = data.DiscordWebhookURL or _G.DiscordWebhookURL or ""
+		end
+	end
+end
+
 local function isPlayerAuthorized(playerName)
 	if playerName == Player.Name then return true end
 	
@@ -136,6 +162,7 @@ local function loadConfig()
 end
 
 loadConfig()
+loadSharedConfig() -- Automatically inherits Webhook URL if set on any other account
 
 local function isEntityAlive(entity)
 	if not entity then return false end
@@ -5547,12 +5574,11 @@ local webhookInput = secWebhook:CreateInput({
 	PlaceholderText = "Paste Discord Webhook URL here...",
 	Enter = true,
 	Callback = function(text)
-		local sanitizedText = string.gsub(text, "%s+", "") -- Remove copy-pasted whitespace or line breaks
+		local sanitizedText = string.gsub(text, "%s+", "") -- Remove whitespaces
 		if sanitizedText == "" or string.find(sanitizedText, "api/webhooks") then
 			_G.DiscordWebhookURL = sanitizedText
-			-- Reset cached MessageId to establish a fresh card on configuration shifts
-			_G.DiscordMessageId = ""
-			saveConfig()
+			_G.DiscordMessageId = nil -- Reset in-memory ID on URL shifts
+			saveSharedConfig() -- Writes to the SharedConfig file instantly
 			sendWebhookNotification("ACTIVE", "Monitoring profile connected successfully.")
 		else
 			Luna:Notification({Title = "Webhook Config", Content = "Invalid Webhook URL pattern.", Icon = "warning"})
