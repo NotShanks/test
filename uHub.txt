@@ -140,7 +140,7 @@ local function saveConfig()
 			KingsRuinsCompletedCount = _G.KingsRuinsCompletedCount,
 			DiscordWebhookURL = _G.DiscordWebhookURL,
 			DiscordMessageId = _G.DiscordMessageId,
-			HighestGold = _G.HighestGold,
+			HighestGoldGained = _G.HighestGoldGained,
 			InitialGold = _G.InitialGold,
 			PreviousGold = _G.PreviousGold,
 			RecentDiffText = _G.RecentDiffText,
@@ -164,7 +164,7 @@ local function loadConfig()
 			_G.KingsRuinsCompletedCount = data.KingsRuinsCompletedCount or 0
 			_G.DiscordWebhookURL = data.DiscordWebhookURL or ""
 			_G.DiscordMessageId = data.DiscordMessageId or nil
-			_G.HighestGold = data.HighestGold or 0
+			_G.HighestGoldGained = data.HighestGoldGained or 0
 			_G.InitialGold = data.InitialGold or 0
 			_G.PreviousGold = data.PreviousGold or -1
 			_G.RecentDiffText = data.RecentDiffText or "➖ 0"
@@ -173,15 +173,15 @@ local function loadConfig()
 	end
 end
 
--- Initialize missing global fallbacks for new users
+-- Initialize missing global fallbacks for persistent tracking across teleports
 if not _G.StartupTime then _G.StartupTime = os.time() end
-if not _G.HighestGold then _G.HighestGold = 0 end
+if not _G.HighestGoldGained then _G.HighestGoldGained = 0 end
 if not _G.InitialGold then _G.InitialGold = 0 end
 if not _G.PreviousGold then _G.PreviousGold = -1 end
 if not _G.RecentDiffText then _G.RecentDiffText = "➖ 0" end
 
 loadConfig()
-loadSharedConfig() -- Automatically inherits Webhook URL if set on any other accounta
+loadSharedConfig() -- Automatically inherits Webhook URL if set on any other account
 
 local function isEntityAlive(entity)
 	if not entity then return false end
@@ -426,13 +426,11 @@ end
 local isSendingWebhook = false
 
 local function sendWebhookNotification(statusState, statusMessage)
-	-- Support both legacy single-parameter calls and new multi-state dashboards
 	if not statusMessage then
 		statusMessage = statusState or "Heartbeat pulse update"
 		statusState = "ACTIVE"
 	end
 
-	-- Exact request resolution order used dynamically per exploit level
 	local httprequest = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
 	if not httprequest or not _G.DiscordWebhookURL or _G.DiscordWebhookURL == "" then return end
 	if isSendingWebhook then return end
@@ -445,7 +443,7 @@ local function sendWebhookNotification(statusState, statusMessage)
 				currentGold = Player.Data.Gold.Value
 			end
 			
-			-- Intialize trackers if picking up first values
+			-- Capture start conditions only once for the entire persistent session
 			if _G.InitialGold == 0 and currentGold > 0 then
 				_G.InitialGold = currentGold
 			end
@@ -453,42 +451,40 @@ local function sendWebhookNotification(statusState, statusMessage)
 				_G.PreviousGold = currentGold
 			end
 			
-			-- Track Highest Lifetime Peak Gold
-			if currentGold > _G.HighestGold then
-				_G.HighestGold = currentGold
+			-- Track the session's overall gained gold strictly
+			local goldGained = math.max(0, currentGold - _G.InitialGold)
+			if goldGained > _G.HighestGoldGained then
+				_G.HighestGoldGained = goldGained
 			end
 			
-			-- Identify the recent up/down movement compared to last check
+			-- Check how the gold shifted purely between this pulse and the last one
 			local goldShift = currentGold - _G.PreviousGold
 			if goldShift > 0 then
 				_G.RecentDiffText = "🟢 📈 +" .. FormatNumber(goldShift)
 			elseif goldShift < 0 then
 				_G.RecentDiffText = "🔴 📉 " .. FormatNumber(goldShift)
 			end
-			_G.PreviousGold = currentGold -- Re-anchor for next tick
+			_G.PreviousGold = currentGold -- Anchor for next execution
 			
-			saveConfig() -- Rapidly Cache Data to survive sudden Server Teleports!
+			saveConfig() -- Rapid save locks all data tightly to LocalStorage preventing loss across teleports
 
-			local goldGained = math.max(0, currentGold - _G.InitialGold)
 			local elapsedSeconds = math.max(0, os.time() - _G.StartupTime)
 			local elapsedMinutes = elapsedSeconds / 60
 			local goldPerMin = elapsedMinutes > 0 and math.floor(goldGained / elapsedMinutes) or 0
 
-			-- Format Persistent Uptime (Survives teleports!)
 			local hours = math.floor(elapsedSeconds / 3600)
 			local minutes = math.floor((elapsedSeconds % 3600) / 60)
 			local seconds = elapsedSeconds % 60
 			local uptimeStr = string.format("%dh %dm %ds", hours, minutes, seconds)
 
-			-- Dynamic state colors
-			local embedColor = 3066993 -- Active emerald green default
+			local embedColor = 3066993 
 			local failsafeStr = "🟢 Healthy"
 
 			if statusState == "FAILSAFE" then
-				embedColor = 16753920 -- Safety Amber Orange
+				embedColor = 16753920 
 				failsafeStr = "⚠️ Tripped"
 			elseif statusState == "TERMINATED" then
-				embedColor = 16711680 -- Crimson Red
+				embedColor = 16711680 
 				failsafeStr = "🔴 Offline"
 			end
 
@@ -498,22 +494,22 @@ local function sendWebhookNotification(statusState, statusMessage)
 				embeds = {{
 					["title"] = "Utility Hub - Real-Time Dashboard",
 					["color"] = embedColor,
-					["description"] = "**Current Activity:**\n`" .. statusMessage .. "`",
+					["description"] = "**Current Activity:**\n`" .. (statusMessage ~= "" and statusMessage or "N/A") .. "`",
 					["fields"] = {
 						-- Row 1: Session Health
 						{["name"] = "⏱️ Persistent Uptime", ["value"] = "**" .. uptimeStr .. "**", ["inline"] = true},
 						{["name"] = "⚔️ Dungeons Cleared", ["value"] = "**" .. FormatNumber(_G.KingsRuinsCompletedCount) .. "**", ["inline"] = true},
-						{["name"] = "📈 Est. Gold / Min", ["value"] = "**" .. FormatNumber(goldPerMin) .. "**", ["inline"] = true},
+						{["name"] = "📈 Est. Gold / Min", ["value"] = "**+" .. FormatNumber(goldPerMin) .. "**", ["inline"] = true},
 						
 						-- Row 2: Live Economy Tracking
 						{["name"] = "🪙 Current Gold", ["value"] = "**" .. FormatNumber(currentGold) .. "**", ["inline"] = true},
-						{["name"] = "💎 Session Yield", ["value"] = "**+" .. FormatNumber(goldGained) .. "**", ["inline"] = true},
-						{["name"] = "📊 Recent Session Shift", ["value"] = "**" .. _G.RecentDiffText .. "**", ["inline"] = true},
+						{["name"] = "💎 Total Session Yield", ["value"] = "**+" .. FormatNumber(goldGained) .. "**", ["inline"] = true},
+						{["name"] = "📊 Recent Action Shift", ["value"] = "**" .. _G.RecentDiffText .. "**", ["inline"] = true},
 						
 						-- Row 3: History & Hardware
-						{["name"] = "👑 Highest Gold Peak", ["value"] = "**" .. FormatNumber(_G.HighestGold) .. "**", ["inline"] = true},
+						{["name"] = "👑 Highest Session Gain", ["value"] = "**+" .. FormatNumber(_G.HighestGoldGained) .. "**", ["inline"] = true},
 						{["name"] = "🛡️ Failsafe Status", ["value"] = "**" .. failsafeStr .. "**", ["inline"] = true},
-						{["name"] = "\u{200B}", ["value"] = "\u{200B}", ["inline"] = true} -- Empty spacer for 3-column layout alignment
+						{["name"] = "\u{200B}", ["value"] = "\u{200B}", ["inline"] = true}
 					},
 					["footer"] = { ["text"] = "System Time: " .. os.date("%X") }
 				}}
@@ -521,17 +517,17 @@ local function sendWebhookNotification(statusState, statusMessage)
 			
 			local jsonPayload = HttpService:JSONEncode(payload)
 			
-			-- Strictly enforce Cleaned API URL (Prevents /messages ID routing collision causing Discord 404 POST failures)
+			-- Safely extract API string discarding invalid characters attached from UI input box
 			local cleanUrl = string.gsub(_G.DiscordWebhookURL, "%s+", "") 
 			local baseUrl = string.match(cleanUrl, "^([^?]+)")
 
 			local reqHeaders = { 
 				["Content-Type"] = "application/json",
-				["User-Agent"] = "UtilityHub/Client.Network" 
+				["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36" 
 			}
 
 			if not _G.DiscordMessageId then
-				-- Execute standard POST and extract message_id for later edits
+				-- Bootstraps a Brand-New Dashboard Message
 				local res = httprequest({ 
 					Url = baseUrl .. "?wait=true", 
 					Method = "POST", 
@@ -541,16 +537,14 @@ local function sendWebhookNotification(statusState, statusMessage)
 
 				if res and (res.Body or res.body) then
 					local bodyTxt = res.Body or res.body
-					local successDec, dataDec = pcall(function() 
-						return HttpService:JSONDecode(bodyTxt) 
-					end)
+					local successDec, dataDec = pcall(function() return HttpService:JSONDecode(bodyTxt) end)
 					if successDec and dataDec and dataDec.id then 
 						_G.DiscordMessageId = dataDec.id 
-						saveConfig() -- Lock Message_ID to surviving folder state
+						saveConfig() 
 					end
 				end
 			else
-				-- Patch API Call securely directly attached to existing tracked Discord message identifier
+				-- Edits Pre-Existing Message Silently
 				local patchRes = httprequest({ 
 					Url = baseUrl .. "/messages/" .. tostring(_G.DiscordMessageId), 
 					Method = "PATCH", 
@@ -560,8 +554,8 @@ local function sendWebhookNotification(statusState, statusMessage)
 				
 				if patchRes then
 					local responseCode = patchRes.StatusCode or patchRes.status_code or patchRes.code
-					-- Handles automatic regeneration if Discord Administrators manually delete the logged dashboard
-					if responseCode and (responseCode == 404 or responseCode == 400 or responseCode == 401) then
+					-- Wipe message memory ONLY on 404 (Not Found / Manually Deleted in discord channel) to prevent new messages spam
+					if responseCode and responseCode == 404 then
 						_G.DiscordMessageId = nil
 						saveConfig()
 					end
@@ -570,9 +564,9 @@ local function sendWebhookNotification(statusState, statusMessage)
 		end)
 		
 		if not success then
-			warn("Utility Hub Webhook dispatch encountered an error: " .. tostring(err))
+			warn("Utility Hub Webhook Error: " .. tostring(err))
 		end
-		isSendingWebhook = false -- Lock released safely
+		isSendingWebhook = false
 	end)
 end
 
@@ -4461,28 +4455,42 @@ local function configureCameraForKingsRuins(enable)
 	end
 end
 
+local visualRings = {}
 local function handleVisualRadius(enable)
+	-- Destroy any existing visualizer zones
+	for _, ring in ipairs(visualRings) do
+		if ring then ring:Destroy() end
+	end
+	table.clear(visualRings)
+	
 	if enable then
-		if visualRadiusSphere then visualRadiusSphere:Destroy() end
-		
 		local targetTeleport = workspace:FindFirstChild("KingsRuinsTeleport")
 		if targetTeleport then
-			visualRadiusSphere = Instance.new("Part")
-			visualRadiusSphere.Name = "Luna_RadiusVisualizer"
-			visualRadiusSphere.Shape = Enum.PartType.Ball
-			visualRadiusSphere.Size = Vector3.new(120, 120, 120) 
-			visualRadiusSphere.Color = Color3.fromRGB(0, 255, 128)
-			visualRadiusSphere.Material = Enum.Material.ForceField
-			visualRadiusSphere.Transparency = 0.6
-			visualRadiusSphere.Anchored = true
-			visualRadiusSphere.CanCollide = false
-			visualRadiusSphere.Position = targetTeleport:GetPivot().Position
-			visualRadiusSphere.Parent = workspace
-		end
-	else
-		if visualRadiusSphere then
-			visualRadiusSphere:Destroy()
-			visualRadiusSphere = nil
+			local center = targetTeleport:GetPivot().Position
+			
+			local function createZone(name, radius, color, trans)
+				local sphere = Instance.new("Part")
+				sphere.Name = "Luna_Zone_" .. name
+				sphere.Shape = Enum.PartType.Ball
+				sphere.Size = Vector3.new(radius * 2, radius * 2, radius * 2) 
+				sphere.Color = color
+				sphere.Material = Enum.Material.ForceField
+				sphere.Transparency = trans
+				sphere.Anchored = true
+				sphere.CanCollide = false
+				sphere.Position = center
+				sphere.Parent = workspace
+				table.insert(visualRings, sphere)
+			end
+
+			-- Zone 1: Core Sightline / Nameplate Range
+			createZone("Core", 45, Color3.fromRGB(255, 0, 0), 0.7)
+			
+			-- Zone 2: Danger / Approaching Sprint Range
+			createZone("Mid", 130, Color3.fromRGB(255, 128, 0), 0.85)
+			
+			-- Zone 3: Radar / Peripheral Entry
+			createZone("Outer", 250, Color3.fromRGB(0, 255, 128), 0.93)
 		end
 	end
 end
@@ -4590,21 +4598,21 @@ local function runKingsRuinsObserver()
 					return
 				end
 
-				local isAnyPlayerInRadius = false
-				local isAnyPlayerCloseToCenter = false
+				-- Threat Detection Layer Tracking
+				local playerInZone1 = false
+				local playerInZone2 = false
+				local playerInZone3 = false
+				
 				local centerPos = teleportModel:GetPivot().Position
-				local checkRadius = 60
 
 				for _, otherPlayer in pairs(Players:GetPlayers()) do
 					if otherPlayer ~= Player and not isPlayerAuthorized(otherPlayer.Name) and otherPlayer.Character and otherPlayer.Character:FindFirstChild("HumanoidRootPart") then
 						local otherHRP = otherPlayer.Character.HumanoidRootPart
 						local distance = (otherHRP.Position - centerPos).Magnitude
-						if distance <= checkRadius then
-							isAnyPlayerInRadius = true
-							if distance <= 20 then
-								isAnyPlayerCloseToCenter = true
-							end
-						end
+						
+						if distance <= 45 then playerInZone1 = true end  -- Danger Close
+						if distance <= 130 then playerInZone2 = true end -- Line of Sight
+						if distance <= 250 then playerInZone3 = true end -- Local Radar
 					end
 				end
 
@@ -4627,41 +4635,52 @@ local function runKingsRuinsObserver()
 				end
 
 				local parsedSeconds = tonumber(string.match(startsInText, "%d+")) or 999
-				local lobbyTimerActive = startsInText ~= ""
+				local lobbyTimerActive = startsInText ~= "" and startsInText ~= "TELEPORTING PARTY"
 
 				if amInLobby then
 					if areOthersInLobby then
 						updateUIRunsStatus("Others inside lobby | Evacuating")
 						executeKingsRuinsLeave()
-						Luna:Notification({Title = "Auto Kings Ruins", Content = "Other players inside lobby. Evacuating...", Icon = "warning"})
+						Luna:Notification({Title = "Kings Ruins Alarm", Content = "Other players inside lobby. Evacuating...", Icon = "warning"})
 						task.wait(2)
 						return
 					end
 
-					if isAnyPlayerInRadius then
-						if isAnyPlayerCloseToCenter then
-							if not lobbyTimerActive or parsedSeconds > 3 then
-								updateUIRunsStatus("Player near teleporter | Evacuating")
-								executeKingsRuinsLeave()
-								Luna:Notification({Title = "Auto Kings Ruins", Content = "Player detected near entrance. Evacuating...", Icon = "warning"})
-								task.wait(2)
-								return
-							end
+					-- Evaluative Retreat Logics based on Countdown Risk vs Position
+					if playerInZone1 then
+						-- Basically on top of the entrance
+						if not lobbyTimerActive or parsedSeconds > 2 then
+							updateUIRunsStatus("Player in CORE ZONE! | Evacuating")
+							executeKingsRuinsLeave()
+							Luna:Notification({Title = "Kings Ruins Alarm", Content = "Player dangerously close! Evacuating...", Icon = "warning"})
+							task.wait(2)
+							return
 						end
+					elseif playerInZone2 then
+						-- Line of Sight Approach
+						if not lobbyTimerActive or parsedSeconds > 15 then
+							updateUIRunsStatus("Player approaching Mid | Evacuating")
+							executeKingsRuinsLeave()
+							Luna:Notification({Title = "Kings Ruins Alarm", Content = "Player spotted running toward entrance. Evacuating...", Icon = "warning"})
+							task.wait(2)
+							return
+						end
+					elseif playerInZone3 then
+						-- Within 250 radar limits; let's hold position but monitor intently
 					end
 					
 					updateUIRunsStatus("Waiting for start (" .. startsInText .. ")")
 				else
-					if isAnyPlayerInRadius then
-						updateUIRunsStatus("Area blocked by players | Waiting patiently")
+					-- We are NOT inside the lobby yet
+					if playerInZone2 then 
+						-- Someone is 130 studs near the stairs; Do NOT walk into the trap yet.
+						updateUIRunsStatus("Sector blocked by players | Waiting hidden")
 					else
+						-- The coast is entirely clear up to the 130+ mark
 						if startsInText == "TELEPORTING PARTY" then
 							updateUIRunsStatus("Waiting for portal status to clear")
-						elseif startsInText == "" then
-							updateUIRunsStatus("Entering Lobby")
-							executeKingsRuinsEntrance()
 						else
-							updateUIRunsStatus("Entering Lobby (Timer Active)")
+							updateUIRunsStatus("Entering Lobby (Coast clear)")
 							executeKingsRuinsEntrance()
 						end
 					end
