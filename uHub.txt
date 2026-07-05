@@ -352,7 +352,7 @@ local function sendWebhookNotification(statusMessage)
 		
 		local headers = {["Content-Type"] = "application/json"}
 		pcall(function()
-			local request = syn and syn.request or http and http.request or http_request or request
+			local request = syn and syn.request or http and http.request or http_request or fluxus and fluxus.request or request
 			if request then
 				request({
 					Url = _G.DiscordWebhookURL,
@@ -410,7 +410,7 @@ local function updateCurrentServerCache()
 	end
 end
 
--- Start a continuous background profile updater for the current node
+-- Start a background profile updater for the current node
 task.spawn(function()
 	while task.wait(10) do
 		pcall(updateCurrentServerCache)
@@ -496,12 +496,16 @@ local function doServerHop()
 			local selectedInstance = servers[math.random(1, #servers)]
 			TeleportService:TeleportToPlaceInstance(PlaceId, selectedInstance, Player)
 		else
-			warn("Utility Hub: No available public servers found via API.")
+			-- Fallback to re-teleporting directly via PlaceId if server lookup fails
+			TeleportService:Teleport(PlaceId, Player)
 		end
 	end)
 	
 	if not success then
 		warn("Utility Hub Hopper Error: " .. tostring(result))
+		pcall(function()
+			TeleportService:Teleport(PlaceId, Player)
+		end)
 	end
 end
 
@@ -1598,6 +1602,7 @@ function Luna:CreateWindow(WindowSettings)
 	TweenService:Create(Main.Logo, TweenInfo.new(0.35, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {ImageTransparency = 0}):Play()
 	TweenService:Create(Navigation.Player.icon.ImageLabel, TweenInfo.new(0.35, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {ImageTransparency = 0}):Play()
 	TweenService:Create(Navigation.Player.icon.UIStroke, TweenInfo.new(0.35, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Transparency = 0}):Play()
+	Main.Line.BackgroundTransparency = 1
 	TweenService:Create(Main.Line, TweenInfo.new(0.35, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {BackgroundTransparency = 0}):Play()
 	wait(0.4)
 	LoadingFrame.Visible = false
@@ -2476,22 +2481,6 @@ function Luna:CreateWindow(WindowSettings)
 					Dropdown.Selected.Text = ""
 				end
 
-				function DropdownV:Set(NewDropdownSettings)
-					NewDropdownSettings = Kwargify(DropdownSettings, NewDropdownSettings or {})
-					DropdownV.Settings = NewDropdownSettings
-					DropdownSettings = NewDropdownSettings
-					Dropdown.Name = DropdownSettings.Name
-					Dropdown.Title.Text = DropdownSettings.Name
-					Refresh()
-
-					if DropdownSettings.MultipleOptions then
-						Dropdown.Selected.PlaceholderText = #DropdownSettings.CurrentOption == 1 and DropdownSettings.CurrentOption[1] or #DropdownSettings.CurrentOption == 0 and "None" or unpackt(DropdownSettings.CurrentOption)
-					else
-						Dropdown.Selected.PlaceholderText = DropdownSettings.CurrentOption[1] or "None"
-					end
-					Dropdown.Selected.Text = ""
-				end
-
 				function DropdownV:Destroy()
 					Dropdown.Visible = false
 					Dropdown:Destroy()
@@ -2499,6 +2488,134 @@ function Luna:CreateWindow(WindowSettings)
 
 				if Flag then Luna.Options[Flag] = DropdownV end
 				return DropdownV
+			end
+
+			-- Persistent input element addition (Luna fallback framework wrapper)
+			function Section:CreateInput(InputSettings, Flag)
+				TabPageSection.Position = UDim2.new(0,0,0,28)
+				local InputV = { IgnoreConfig = false, Class = "Input", Settings = InputSettings }
+
+				InputSettings = Kwargify({
+					Name = "Input",
+					PlaceholderText = "Type here...",
+					Enter = true,
+					Callback = function(text) end
+				}, InputSettings or {})
+
+				local Input = Elements.Template:FindFirstChild("Input") or Elements.Template:FindFirstChild("TextBox")
+				if not Input then
+					-- Dynamic procedural creation complying strictly with Luna's native styling
+					Input = Instance.new("Frame")
+					Input.Name = InputSettings.Name .. " - Input"
+					Input.Size = UDim2.new(1, -25, 0, 48)
+					Input.BackgroundColor3 = Color3.fromRGB(36, 34, 42)
+					Input.BackgroundTransparency = 0.5
+					
+					local corner = Instance.new("UICorner")
+					corner.CornerRadius = UDim.new(0, 6)
+					corner.Parent = Input
+
+					local stroke = Instance.new("UIStroke")
+					stroke.Color = Color3.fromRGB(64, 61, 76)
+					stroke.Thickness = 1
+					stroke.Parent = Input
+
+					local title = Instance.new("TextLabel")
+					title.Name = "Title"
+					title.Size = UDim2.new(0.4, 0, 1, 0)
+					title.Position = UDim2.new(0, 12, 0, 0)
+					title.BackgroundTransparency = 1
+					title.Font = Enum.Font.SourceSans
+					title.Text = InputSettings.Name
+					title.TextColor3 = Color3.fromRGB(255, 255, 255)
+					title.TextSize = 14
+					title.TextXAlignment = Enum.TextXAlignment.Left
+					title.Parent = Input
+
+					local bgBox = Instance.new("Frame")
+					bgBox.Name = "BgBox"
+					bgBox.Size = UDim2.new(0.5, 0, 0, 30)
+					bgBox.Position = UDim2.new(0.5, -5, 0.5, -15)
+					bgBox.BackgroundColor3 = Color3.fromRGB(24, 23, 28)
+					bgBox.BackgroundTransparency = 0.3
+					bgBox.Parent = Input
+					
+					local boxCorner = Instance.new("UICorner")
+					boxCorner.CornerRadius = UDim.new(0, 4)
+					boxCorner.Parent = bgBox
+
+					local boxStroke = Instance.new("UIStroke")
+					boxStroke.Color = Color3.fromRGB(50, 48, 60)
+					boxStroke.Thickness = 1
+					boxStroke.Parent = bgBox
+
+					local box = Instance.new("TextBox")
+					box.Name = "InputBox"
+					box.Size = UDim2.new(1, -16, 1, 0)
+					box.Position = UDim2.new(0, 8, 0, 0)
+					box.BackgroundTransparency = 1
+					box.Font = Enum.Font.SourceSans
+					box.Text = ""
+					box.PlaceholderText = InputSettings.PlaceholderText
+					box.PlaceholderColor3 = Color3.fromRGB(120, 120, 130)
+					box.TextColor3 = Color3.fromRGB(255, 255, 255)
+					box.TextSize = 13
+					box.TextXAlignment = Enum.TextXAlignment.Left
+					box.ClearTextOnFocus = false
+					box.Parent = bgBox
+				else
+					Input = Input:Clone()
+					Input.Name = InputSettings.Name .. " - Input"
+					Input.Title.Text = InputSettings.Name
+					if Input:FindFirstChild("InputBox") then
+						Input.InputBox.PlaceholderText = InputSettings.PlaceholderText
+					elseif Input:FindFirstChild("BgBox") and Input.BgBox:FindFirstChild("InputBox") then
+						Input.BgBox.InputBox.PlaceholderText = InputSettings.PlaceholderText
+					end
+				end
+
+				Input.Visible = true
+				Input.Parent = TabPageSection
+
+				local actualBox = Input:FindFirstChild("InputBox", true) or Input:FindFirstChildOfClass("TextBox", true)
+
+				local function fireCallback(text)
+					pcall(function()
+						InputSettings.Callback(text)
+					end)
+					InputV.CurrentValue = text
+				end
+
+				if actualBox then
+					if InputSettings.Enter then
+						actualBox.FocusLost:Connect(function(enterPressed)
+							if enterPressed then
+								fireCallback(actualBox.Text)
+							end
+						end)
+					else
+						actualBox:GetPropertyChangedSignal("Text"):Connect(function()
+							fireCallback(actualBox.Text)
+						end)
+					end
+				end
+
+				function InputV:Set(Settings2)
+					local val = Settings2.CurrentValue or ""
+					if actualBox then
+						actualBox.Text = val
+					end
+					InputV.CurrentValue = val
+					pcall(function() InputSettings.Callback(val) end)
+				end
+
+				function InputV:Destroy()
+					Input.Visible = false
+					Input:Destroy()
+				end
+
+				if Flag then Luna.Options[Flag] = InputV end
+				return InputV
 			end
 
 			return Section
@@ -2672,6 +2789,62 @@ task.spawn(function()
 					end
 				end
 			end)
+		end
+	end
+end)
+
+-- ==========================================
+-- SERVER CO-PRESENCE FAILSAFE
+-- ==========================================
+local function executeFailsafeTeleport()
+	_G.AutoDungeon = false
+	_G.AutoKingsRuins = false
+	_G.SlingshotStatue = false
+	_G.SlingshotElven = false
+	_G.SlingshotMimic = false
+	_G.AutoAllMobsOverworld = false
+	_G.AutoAllMobs = false
+
+	CancelSmoothTween()
+	toggleNoclip(false)
+	resetWalkSpeed()
+	
+	updateUIRunsStatus("Failsafe: Other players detected!")
+	sendWebhookNotification("Failsafe activated: another player detected in server.")
+
+	pcall(function()
+		local char = Player.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		if hrp then
+			if _G.SavedOriginalPosition then
+				hrp.CFrame = _G.SavedOriginalPosition
+			else
+				local spFolder = workspace:FindFirstChild("SpawnPoints")
+				local fallbackSpawn = spFolder and spFolder:FindFirstChildWhichIsA("BasePart")
+				if fallbackSpawn then
+					hrp.CFrame = fallbackSpawn.CFrame + Vector3.new(0, 5, 0)
+				end
+			end
+			stopMomentum(hrp)
+		end
+	end)
+
+	task.wait(1.5)
+	updateUIRunsStatus("Failsafe: Server hopping...")
+	executeProjectedServerHop()
+end
+
+task.spawn(function()
+	while task.wait(3) do
+		if (_G.AutoKingsRuins or _G.AutoDungeon) then
+			if #Players:GetPlayers() > 1 then
+				Luna:Notification({
+					Title = "Failsafe Triggered",
+					Content = "Another player joined the server. Teleporting to safety...",
+					Icon = "warning"
+				})
+				executeFailsafeTeleport()
+			end
 		end
 	end
 end)
@@ -3556,8 +3729,10 @@ local function isDungeonClear()
 	local activeMobs = 0
 	if mobsFolder then
 		for _, mob in pairs(mobsFolder:GetChildren()) do
-			if isEntityAlive(mob) then
-				activeMobs = activeMobs + 1
+			if mob:IsA("Model") and isEntityAlive(mob) then
+				if mob.Name ~= "DungeonMimicChest" then
+					activeMobs = activeMobs + 1
+				end
 			end
 		end
 	end
@@ -3565,9 +3740,11 @@ local function isDungeonClear()
 	local activeChests = 0
 	if chestsFolder then
 		for _, chest in pairs(chestsFolder:GetChildren()) do
-			local prompt = chest:FindFirstChildWhichIsA("ProximityPrompt", true)
-			if prompt and prompt.Enabled then
-				activeChests = activeChests + 1
+			if chest.Name == "TreasureChest" or chest.Name == "SmallChest" then
+				local prompt = chest:FindFirstChildWhichIsA("ProximityPrompt", true)
+				if prompt and prompt.Enabled then
+					activeChests = activeChests + 1
+				end
 			end
 		end
 	end
@@ -3635,6 +3812,7 @@ local function StartMasterAutoDungeon()
 			if not genMap or not root then task.wait(0.5) continue end
 
 			if state == "EVALUATE" then
+				updateUIRunsStatus("Evaluating Active Floor...")
 				local activeFloor = getActiveFloor(genMap, root)
 				if activeFloor then
 					if activeFloor.Name == "Floor3" then
@@ -3702,6 +3880,7 @@ local function StartMasterAutoDungeon()
 				end
 
 				if roomState == "INIT" then
+					updateUIRunsStatus("Moving to event room gate...")
 					if not door then
 						if doorsModel and doorsModel:GetPivot() then
 							preventFling(doorsModel:GetPivot() + Vector3.new(0, 5, 0))
@@ -3711,7 +3890,7 @@ local function StartMasterAutoDungeon()
 						task.wait(1)
 					else
 						if (door.Position - root.Position).Magnitude > 15 then
-							preventFling(door.CFrame * CFrame.new(0, 0, 8))
+							preventFling(door.CFrame * CFrame.new(0, 0, 6))
 							task.wait(1)
 						else
 							roomState = "OPEN_DOOR"
@@ -3719,6 +3898,7 @@ local function StartMasterAutoDungeon()
 					end
 
 				elseif roomState == "OPEN_DOOR" then
+					updateUIRunsStatus("Opening room gate...")
 					if prompt and prompt.Enabled then
 						prompt.HoldDuration = 0
 						pcall(function() fireproximityprompt(prompt) end)
@@ -3728,6 +3908,7 @@ local function StartMasterAutoDungeon()
 					end
 
 				elseif roomState == "WALK_IN" then
+					updateUIRunsStatus("Advancing into room...")
 					local closeSound = currentRoom:FindFirstChild("Doors") and currentRoom.Doors:FindFirstChild("WallBlock") and currentRoom.Doors.WallBlock:FindFirstChild("Close")
 					
 					if closeSound and closeSound.Playing then
@@ -3751,6 +3932,7 @@ local function StartMasterAutoDungeon()
 					end
 
 				elseif roomState == "WAIT_CLOSE" then
+					updateUIRunsStatus("Waiting for entry gate to lock...")
 					local closeSound = currentRoom:FindFirstChild("Doors") and currentRoom.Doors:FindFirstChild("WallBlock") and currentRoom.Doors.WallBlock:FindFirstChild("Close")
 					if closeSound and not closeSound.Playing then
 						roomState = "COMBAT"
@@ -3759,6 +3941,7 @@ local function StartMasterAutoDungeon()
 					end
 
 				elseif roomState == "COMBAT" then
+					updateUIRunsStatus("Clearing event guardians...")
 					if not _G.SlingshotStatue then
 						_G.SlingshotStatue = true
 						SlingshotKill("Statue", "SlingshotStatue")
@@ -3771,6 +3954,7 @@ local function StartMasterAutoDungeon()
 				local prompt = door and door:FindFirstChildWhichIsA("ProximityPrompt", true)
 
 				if roomState == "INIT" then
+					updateUIRunsStatus("Navigating to exit gate...")
 					if not door then
 						if gateModel and gateModel:GetPivot() then
 							preventFling(gateModel:GetPivot() + Vector3.new(0, 5, 0))
@@ -3788,6 +3972,7 @@ local function StartMasterAutoDungeon()
 					end
 				
 				elseif roomState == "OPEN_GATE" then
+					updateUIRunsStatus("Opening floor exit portal...")
 					if prompt and prompt.Enabled then
 						prompt.HoldDuration = 0
 						pcall(function() fireproximityprompt(prompt) end)
@@ -3797,6 +3982,7 @@ local function StartMasterAutoDungeon()
 					end
 
 				elseif roomState == "WALK_THROUGH" then
+					updateUIRunsStatus("Entering next floor portal...")
 					if door then
 						local nextStart = currentRoom:FindFirstChild("NextFloorStart")
 						if nextStart then
@@ -3809,6 +3995,7 @@ local function StartMasterAutoDungeon()
 					end
 
 				elseif roomState == "WAIT_FLOOR_LOAD" then
+					updateUIRunsStatus("Waiting for floor assets...")
 					local activeFloor = getActiveFloor(genMap, root)
 					if activeFloor and currentRoom.Parent ~= activeFloor then
 						state = "EVALUATE"
@@ -3821,6 +4008,7 @@ local function StartMasterAutoDungeon()
 				local prompt = door and door:FindFirstChildWhichIsA("ProximityPrompt", true)
 
 				if roomState == "INIT" then
+					updateUIRunsStatus("Approaching Boss Chamber...")
 					if not door then
 						if doorsModel and doorsModel:GetPivot() then
 							preventFling(doorsModel:GetPivot() + Vector3.new(0, 5, 0))
@@ -3838,6 +4026,7 @@ local function StartMasterAutoDungeon()
 					end
 
 				elseif roomState == "OPEN_DOOR" then
+					updateUIRunsStatus("Opening Boss Chamber...")
 					if prompt and prompt.Enabled then
 						prompt.HoldDuration = 0
 						pcall(function() fireproximityprompt(prompt) end)
@@ -3848,11 +4037,13 @@ local function StartMasterAutoDungeon()
 					end
 				
 				elseif roomState == "WAIT_SPAWN" then
+					updateUIRunsStatus("Waiting for Elven Sorceress...")
 					if tick() - spawnTimer >= 5 then
 						roomState = "COMBAT"
 					end
 
 				elseif roomState == "COMBAT" then
+					updateUIRunsStatus("Defeating Elven Sorceress...")
 					local elvenAlive = false
 					local mobsFolder = workspace:FindFirstChild("Mobs")
 					
@@ -3914,6 +4105,7 @@ local function StartMasterAutoDungeon()
 				end
 
 				if targetChest then
+					updateUIRunsStatus("Collecting treasure chests...")
 					root.CFrame = targetChest:GetPivot()
 					
 					local center = targetChest:FindFirstChild("Center")
@@ -3955,6 +4147,7 @@ local function StartMasterAutoDungeon()
 					local openVal = targetMimic:FindFirstChild("OpenChest")
 					
 					if openVal and openVal.Value == false then
+						updateUIRunsStatus("Triggering Mimic Chest...")
 						root.CFrame = targetMimic:GetPivot()
 						
 						local bitePlayer = targetMimic:FindFirstChild("BitePlayer") or targetMimic:FindFirstChild("IdleCollision")
@@ -3977,6 +4170,7 @@ local function StartMasterAutoDungeon()
 						end
 
 					elseif openVal and openVal.Value == true then
+						updateUIRunsStatus("Defeating Mimic Hostile...")
 						if not _G.SlingshotMimic then
 							_G.SlingshotMimic = true
 							SlingshotKill("DungeonMimicChest", "SlingshotMimic")
@@ -3992,6 +4186,15 @@ local function StartMasterAutoDungeon()
 					task.wait(0.1)
 					continue
 				end
+
+				-- Loot and boss variables are completely cleared; initiate natural dungeon exit phase
+				updateUIRunsStatus("Looting completed. Leaving dungeon...")
+				_G.KingsRuinsCompletedCount = _G.KingsRuinsCompletedCount + 1
+				saveConfig()
+				sendWebhookNotification("Kings Ruins Dungeon Completed Successfully!")
+				
+				teleportToExitGate()
+				task.wait(3.0) 
 
 				_G.AutoDungeon = false
 				toggleNoclip(false)
@@ -4125,7 +4328,10 @@ local function runKingsRuinsObserver()
 		while _G.AutoKingsRuins do
 			pcall(function()
 				if isInDungeon() then
-					updateUIRunsStatus("Dungeon active")
+					-- If active dungeon clear is underway, skip status updates
+					if not _G.AutoDungeon then
+						updateUIRunsStatus("Dungeon active")
+					end
 					task.wait(2)
 					return
 				end
@@ -4214,7 +4420,6 @@ local function runKingsRuinsObserver()
 					
 					updateUIRunsStatus("Waiting for start (" .. startsInText .. ")")
 				else
-					-- Waiting patiently configuration applied per requested parameters
 					if isAnyPlayerInRadius then
 						updateUIRunsStatus("Area blocked by players | Waiting patiently")
 					else
@@ -5191,21 +5396,25 @@ secMiscCore:CreateButton({
 
 local secWebhook = tabMisc:CreateSection("Webhook Integration")
 
-secWebhook:CreateButton({
-	Name = "Paste Webhook URL from Clipboard",
-	Description = "Assign your Discord Webhook URL directly from your clipboard.",
-	Callback = function()
-		local clipboard = getclipboard and getclipboard() or ""
-		if clipboard and string.find(clipboard, "discord.com/api/webhooks") then
-			_G.DiscordWebhookURL = clipboard
+-- Persistent textbox configuration utilizing the custom Input element added to the Luna section
+local webhookInput = secWebhook:CreateInput({
+	Name = "Discord Webhook",
+	PlaceholderText = "Paste Discord Webhook URL here...",
+	Enter = true,
+	Callback = function(text)
+		if text == "" or string.find(text, "discord.com/api/webhooks") then
+			_G.DiscordWebhookURL = text
 			saveConfig()
-			Luna:Notification({Title = "Webhook Config", Content = "Discord webhook URL applied successfully.", Icon = "check_circle_outline"})
-			sendWebhookNotification("Webhook profile linked to client successfully!")
+			Luna:Notification({Title = "Webhook Config", Content = "Discord webhook URL saved successfully.", Icon = "check_circle_outline"})
+			sendWebhookNotification("Webhook configuration updated successfully!")
 		else
-			Luna:Notification({Title = "Webhook Config", Content = "Invalid clipboard content. Please copy a valid Discord webhook URL.", Icon = "warning"})
+			Luna:Notification({Title = "Webhook Config", Content = "Invalid Webhook URL pattern.", Icon = "warning"})
 		end
 	end
 })
+
+-- Update textbox visual state with the stored value on launch
+webhookInput:Set({ CurrentValue = _G.DiscordWebhookURL })
 
 local secDestruct = tabMisc:CreateSection("Self-Destruct")
 secDestruct:CreateButton({
