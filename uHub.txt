@@ -4355,11 +4355,19 @@ local function runKingsRuinsObserver()
 				local seasonStatus, remainingTime = getSeasonTimeRemaining()
 				if seasonStatus == "Inactive" then
 					if remainingTime > 120 then
-						updateUIRunsStatus("Wrong season | Server Hopping")
-						Luna:Notification({Title = "Auto Kings Ruins", Content = "Incorrect season. Hopping to target server Profile...", Icon = "autorenew"})
-						task.wait(2)
-						executeProjectedServerHop()
-						return
+						-- Grace period to allow client game values to synchronize on transition boundaries
+						updateUIRunsStatus("Season shifting? Verifying...")
+						task.wait(10)
+						
+						-- Re-verify season state after synchronization period
+						seasonStatus, remainingTime = getSeasonTimeRemaining()
+						if seasonStatus == "Inactive" and remainingTime > 120 then
+							updateUIRunsStatus("Wrong season | Server Hopping")
+							Luna:Notification({Title = "Auto Kings Ruins", Content = "Incorrect season. Hopping to target server Profile...", Icon = "autorenew"})
+							task.wait(2)
+							executeProjectedServerHop()
+							return
+						end
 					else
 						updateUIRunsStatus("Season starts in " .. math.floor(remainingTime) .. "s")
 						task.wait(1)
@@ -5421,8 +5429,8 @@ local webhookInput = secWebhook:CreateInput({
 		if text == "" or string.find(text, "discord.com/api/webhooks") then
 			_G.DiscordWebhookURL = text
 			saveConfig()
-			Luna:Notification({Title = "Webhook Config", Content = "Discord webhook URL saved successfully.", Icon = "check_circle_outline"})
-			sendWebhookNotification("Webhook configuration updated successfully!")
+			-- Visual notifications removed; configuration writes silently to file
+			sendWebhookNotification("Webhook profile updated successfully!")
 		else
 			Luna:Notification({Title = "Webhook Config", Content = "Invalid Webhook URL pattern.", Icon = "warning"})
 		end
