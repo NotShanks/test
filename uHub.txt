@@ -79,16 +79,28 @@ local clickConnectionBegan, clickConnectionEnded, clickRunService
 local gatesClickConnectionBegan, gatesClickConnectionEnded, gatesClickRunService
 local specConnectionBegan, specConnectionEnded, specRunService
 
-local configFileName = "Luna_UtilityHub_Config.json"
-local cacheFileName = "Luna_ServerSeasonCache.json"
+local folderName = "Luna_UtilityHub"
+local configFileName = folderName .. "/Config_" .. Player.Name .. ".json" -- Player-unique path
+local cacheFileName = folderName .. "/SharedSeasonCache.json"             -- Globally shared path
+
+-- Helper to safely establish folder structures
+local function ensureConfigFolder()
+	if makefolder then
+		pcall(function()
+			makefolder(folderName)
+		end)
+	end
+end
 
 local function saveConfig()
 	if writefile then
+		ensureConfigFolder()
 		local data = {
 			AutoKingsRuins = _G.AutoKingsRuins,
 			EnableTweeningSafety = _G.EnableTweeningSafety,
 			KingsRuinsCompletedCount = _G.KingsRuinsCompletedCount,
-			DiscordWebhookURL = _G.DiscordWebhookURL
+			DiscordWebhookURL = _G.DiscordWebhookURL,
+			DiscordMessageId = _G.DiscordMessageId
 		}
 		pcall(function()
 			writefile(configFileName, HttpService:JSONEncode(data))
@@ -97,6 +109,7 @@ local function saveConfig()
 end
 
 local function loadConfig()
+	ensureConfigFolder()
 	if isfile and isfile(configFileName) then
 		local success, data = pcall(function()
 			return HttpService:JSONDecode(readfile(configFileName))
@@ -106,6 +119,7 @@ local function loadConfig()
 			_G.EnableTweeningSafety = data.EnableTweeningSafety or false
 			_G.KingsRuinsCompletedCount = data.KingsRuinsCompletedCount or 0
 			_G.DiscordWebhookURL = data.DiscordWebhookURL or ""
+			_G.DiscordMessageId = data.DiscordMessageId or ""
 		end
 	end
 end
@@ -338,43 +352,126 @@ end
 -- ==========================================
 -- DISCORD WEBHOOK SYSTEM
 -- ==========================================
-local function sendWebhookNotification(statusMessage)
+-- ==========================================
+-- DISCORD WEBHOOK SYSTEM & STATS INITIALIZATION
+-- ==========================================
+local startupTime = os.time()
+local initialGold = 0
+
+pcall(function()
+	if Player:FindFirstChild("Data") and Player.Data:FindFirstChild("Gold") then
+		initialGold = Player.Data.Gold.Value
+	end
+end)
+
+_G.DiscordMessageId = _G.DiscordMessageId or ""
+local isSendingWebhook = false
+
+local function sendWebhookNotification(statusState, statusMessage)
+	-- Support both legacy single-parameter calls and new multi-state dashboards
+	if not statusMessage then
+		statusMessage = statusState or "Heartbeat pulse update"
+		statusState = "ACTIVE"
+	end
+
 	if not _G.DiscordWebhookURL or _G.DiscordWebhookURL == "" then return end
+	if isSendingWebhook then return end
+	isSendingWebhook = true
 	
 	task.spawn(function()
-		local goldValue = "N/A"
+		local currentGold = 0
 		pcall(function()
 			if Player:FindFirstChild("Data") and Player.Data:FindFirstChild("Gold") then
-				goldValue = tostring(Player.Data.Gold.Value)
+				currentGold = Player.Data.Gold.Value
 			end
 		end)
-		
+		if initialGold == 0 and currentGold > 0 then
+			initialGold = currentGold
+		end
+
+		local goldGained = math.max(0, currentGold - initialGold)
+		local elapsedSeconds = os.time() - startupTime
+		local elapsedMinutes = elapsedSeconds / 60
+		local goldPerMin = elapsedMinutes > 0 and math.floor(goldGained / elapsedMinutes) or 0
+
+		-- Format Uptime
+		local hours = math.floor(elapsedSeconds / 3600)
+		local minutes = math.floor((elapsedSeconds % 3600) / 60)
+		local seconds = elapsedSeconds % 60
+		local uptimeStr = string.format("%dh %dm %ds", hours, minutes, seconds)
+
+		-- Dynamic state colors
+		local embedColor = 3066993 -- Active emerald green default
+		local failsafeStr = "🟢 Healthy"
+
+		if statusState == "FAILSAFE" then
+			embedColor = 16753920 -- Safety Amber Orange
+			failsafeStr = "⚠️ Tripped"
+		elseif statusState == "TERMINATED" then
+			embedColor = 16711680 -- Crimson Red
+			failsafeStr = "🔴 Offline"
+		end
+
+		local shortJobId = game.JobId ~= "" and string.sub(game.JobId, 1, 8) or "Solo/Lobby"
+
 		local data = {
 			["embeds"] = {{
-				["title"] = "Utility Hub - Status Log",
-				["color"] = 3066993, -- Soft aesthetic green
+				["title"] = "Utility Hub - Real-Time Dashboard",
+				["color"] = embedColor,
+				["description"] = "**Current Activity:**\n`" .. statusMessage .. "`",
 				["fields"] = {
-					{["name"] = "Player", ["value"] = Player.Name, ["inline"] = true},
-					{["name"] = "Gold", ["value"] = goldValue, ["inline"] = true},
-					{["name"] = "Completed Runs", ["value"] = tostring(_G.KingsRuinsCompletedCount), ["inline"] = true},
-					{["name"] = "Update", ["value"] = statusMessage, ["inline"] = false}
+					-- Row 1: Session Health
+					{["name"] = "⏱️ Uptime", ["value"] = "**" .. uptimeStr .. "**", ["inline"] = true},
+					{["name"] = "⚔️ Dungeons Cleared", ["value"] = "**" .. tostring(_G.KingsRuinsCompletedCount) .. "**", ["inline"] = true},
+					{["name"] = "🪙 Current Gold", ["value"] = "**" .. tostring(currentGold) .. "**", ["inline"] = true},
+					-- Row 2: Farming Stats
+					{["name"] = "🌐 Server Node", ["value"] = "**" .. shortJobId .. "**", ["inline"] = true},
+					{["name"] = "⛏️ Grand Ores Left", ["value"] = "**" .. tostring(_G.GrandOresLeft) .. "**", ["inline"] = true},
+					{["name"] = "📈 Gold / Min", ["value"] = "**" .. tostring(goldPerMin) .. "**", ["inline"] = true},
+					-- Row 3: Account Assets
+					{["name"] = "🛡️ Failsafe Status", ["value"] = "**" .. failsafeStr .. "**", ["inline"] = true},
+					{["name"] = "📦 Chests Left", ["value"] = "**" .. tostring(_G.ChestsLeft) .. "**", ["inline"] = true},
+					{["name"] = "💎 Session Yield", ["value"] = "**+" .. tostring(goldGained) .. " Gold**", ["inline"] = true}
 				},
-				["timestamp"] = os.date("!Y-%m-%dT%H:%M:%SZ") -- Native compliant ISO-8601 UTC timestamp
+				["footer"] = {["text"] = "Utility Hub Client Automated Logs"},
+				["timestamp"] = os.date("!Y-%m-%dT%H:%M:%SZ")
 			}}
 		}
 		
 		local headers = {["Content-Type"] = "application/json"}
-		pcall(function()
-			local request = syn and syn.request or http and http.request or http_request or fluxus and fluxus.request or request
-			if request then
-				request({
-					Url = _G.DiscordWebhookURL,
-					Method = "POST",
+		local payload = HttpService:JSONEncode(data)
+		
+		local req = syn and syn.request or http and http.request or http_request or fluxus and fluxus.request or request
+		if req then
+			pcall(function()
+				local hasMessageId = (_G.DiscordMessageId and _G.DiscordMessageId ~= "")
+				local targetUrl = _G.DiscordWebhookURL
+				local httpMethod = "POST"
+
+				if hasMessageId then
+					targetUrl = _G.DiscordWebhookURL .. "/messages/" .. _G.DiscordMessageId
+					httpMethod = "PATCH"
+				else
+					targetUrl = _G.DiscordWebhookURL .. "?wait=true"
+				end
+
+				local res = req({
+					Url = targetUrl,
+					Method = httpMethod,
 					Headers = headers,
-					Body = HttpService:JSONEncode(data)
+					Body = payload
 				})
-			end
-		end)
+
+				if not hasMessageId and res and res.Body then
+					local decoded = HttpService:JSONDecode(res.Body)
+					if decoded and decoded.id then
+						_G.DiscordMessageId = decoded.id
+						saveConfig()
+					end
+				end
+			end)
+		end
+		isSendingWebhook = false
 	end)
 end
 
@@ -396,6 +493,7 @@ local function updateCurrentServerCache()
 			local gameMins = (tonumber(hoursStr) * 60) + tonumber(minutesStr)
 			
 			local cache = {}
+			ensureConfigFolder()
 			if isfile and isfile(cacheFileName) then
 				pcall(function()
 					cache = HttpService:JSONDecode(readfile(cacheFileName))
@@ -417,6 +515,7 @@ local function updateCurrentServerCache()
 			end
 			
 			pcall(function()
+				ensureConfigFolder()
 				writefile(cacheFileName, HttpService:JSONEncode(cache))
 			end)
 		end
@@ -5426,11 +5525,13 @@ local webhookInput = secWebhook:CreateInput({
 	PlaceholderText = "Paste Discord Webhook URL here...",
 	Enter = true,
 	Callback = function(text)
-		if text == "" or string.find(text, "discord.com/api/webhooks") then
+		-- Allows custom anti-ratelimit proxy domains natively
+		if text == "" or string.find(text, "api/webhooks") then
 			_G.DiscordWebhookURL = text
+			-- Clear old cached MessageId to start fresh on a new webhook address
+			_G.DiscordMessageId = ""
 			saveConfig()
-			-- Visual notifications removed; configuration writes silently to file
-			sendWebhookNotification("Webhook profile updated successfully!")
+			sendWebhookNotification("ACTIVE", "Monitoring profile connected successfully.")
 		else
 			Luna:Notification({Title = "Webhook Config", Content = "Invalid Webhook URL pattern.", Icon = "warning"})
 		end
@@ -5481,6 +5582,12 @@ secDestruct:CreateButton({
 		if gatesClickConnectionBegan then gatesClickConnectionBegan:Disconnect() end
 		if gatesClickConnectionEnded then gatesClickConnectionEnded:Disconnect() end
 		if gatesClickRunService then gatesClickRunService:Disconnect() end
+
+		-- Update the webhook dashboard to the Offline State
+		pcall(function()
+			sendWebhookNotification("TERMINATED", "Automation suite manually closed down.")
+		end)
+		task.wait(1.0)
 
 		Luna:Destroy()
 	end
@@ -5545,5 +5652,32 @@ task.spawn(function()
 			handleVisualRadius(true)
 			runKingsRuinsObserver()
 		end
+	end
+end)
+
+-- ==========================================
+-- INDEPENDENT TELEMETRY HEARTBEAT LOOP
+-- ==========================================
+task.spawn(function()
+	local DISCORD_UPDATE_INTERVAL = 30
+	while task.wait(DISCORD_UPDATE_INTERVAL) do
+		pcall(function()
+			if _G.DiscordWebhookURL and _G.DiscordWebhookURL ~= "" then
+				local status = "ACTIVE"
+				local msg = "Farming loop running smoothly."
+				
+				if _G.AutoDungeon then
+					msg = "Actively completing Master Dungeon runs."
+				elseif _G.AutoKingsRuins then
+					msg = "Monitoring Kings Ruins teleporter entrance."
+				elseif _G.AutoAllMobsOverworld or _G.AutoAllMobs then
+					msg = "Farming world entities via slingshot automation."
+				else
+					msg = "Systems idle, awaiting farm instructions."
+				end
+				
+				sendWebhookNotification(status, msg)
+			end
+		end)
 	end
 end)
