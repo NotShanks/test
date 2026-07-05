@@ -573,6 +573,36 @@ end
 -- ==========================================
 -- SEASON CACHE & SMART PROJECTED SERVER HOP
 -- ==========================================
+_G.FailedCachedJobs = _G.FailedCachedJobs or {}
+_G.ConsecutiveHopAttempts = _G.ConsecutiveHopAttempts or 0
+_G.LastTargetedJobId = nil
+
+local TeleportService = game:GetService("TeleportService")
+
+-- 1. Catch backend Roblox connection errors to prevent endless "Server Full" loops
+if _G.TeleportFailConnection then
+	_G.TeleportFailConnection:Disconnect()
+	_G.TeleportFailConnection = nil
+end
+
+_G.TeleportFailConnection = TeleportService.TeleportInitFailed:Connect(function(player, teleportResult, errorMessage)
+	if _G.LastTargetedJobId then
+		_G.FailedCachedJobs[_G.LastTargetedJobId] = true
+		-- Instantly purge the bad server from the cache file
+		pcall(function()
+			ensureConfigFolder()
+			if isfile and isfile(cacheFileName) then
+				local cache = HttpService:JSONDecode(readfile(cacheFileName))
+				if cache and cache[_G.LastTargetedJobId] then
+					cache[_G.LastTargetedJobId] = nil
+					writefile(cacheFileName, HttpService:JSONEncode(cache))
+				end
+			end
+		end)
+		_G.LastTargetedJobId = nil
+	end
+end)
+
 local function updateCurrentServerCache()
 	if isInDungeon() or game.JobId == "" then return end
 	local effects = workspace:FindFirstChild("Effects")
@@ -637,7 +667,8 @@ local function getTargetServerFromCache()
 	local bestTimeRemaining = 9999
 	
 	for jobId, data in pairs(cache) do
-		if jobId ~= game.JobId then
+		-- Exclude the current server AND globally blacklisted/failed servers
+		if jobId ~= game.JobId and not _G.FailedCachedJobs[jobId] then
 			local elapsedRealSeconds = now - data.realTime
 			local elapsedGameMins = (elapsedRealSeconds / REAL_SECONDS_PER_DAY) * IN_GAME_MINUTES_PER_DAY
 			local projectedTotalMins = data.gameMins + elapsedGameMins
@@ -679,13 +710,11 @@ local function getTargetServerFromCache()
 end
 
 local function doServerHop()
-	local TeleportService = game:GetService("TeleportService")
 	local PlaceId = game.PlaceId
 	local JobId = game.JobId
 	
 	local success, result = pcall(function()
 		local servers = {}
-		-- Fetches public servers while excluding full instances
 		local req = game:HttpGet("https://games.roblox.com/v1/games/" .. PlaceId .. "/servers/Public?sortOrder=Desc&limit=100&excludeFullGames=true")
 		local body = HttpService:JSONDecode(req)
 
@@ -703,7 +732,6 @@ local function doServerHop()
 			local selectedInstance = servers[math.random(1, #servers)]
 			TeleportService:TeleportToPlaceInstance(PlaceId, selectedInstance, Player)
 		else
-			-- Fallback to re-teleporting directly via PlaceId if server lookup fails
 			TeleportService:Teleport(PlaceId, Player)
 		end
 	end)
@@ -718,13 +746,34 @@ end
 
 local function executeProjectedServerHop()
 	local cachedJobId = getTargetServerFromCache()
-	if cachedJobId then
-		updateUIRunsStatus("Hopping to cached target server...")
-		local TeleportService = game:GetService("TeleportService")
+	
+	-- 2. Prevent infinite 10-second failure loops by aggressively routing outwards after 4 tries
+	if cachedJobId and _G.ConsecutiveHopAttempts < 4 then
+		_G.ConsecutiveHopAttempts = _G.ConsecutiveHopAttempts + 1
+		updateUIRunsStatus("Hopping to profile (" .. _G.ConsecutiveHopAttempts .. "/4)")
+		
+		_G.LastTargetedJobId = cachedJobId
 		pcall(function()
 			TeleportService:TeleportToPlaceInstance(game.PlaceId, cachedJobId, Player)
 		end)
 	else
+		if _G.ConsecutiveHopAttempts >= 4 then
+			updateUIRunsStatus("Target failed/full. Hopping public!")
+			-- Blacklist manually on soft failure
+			if cachedJobId then _G.FailedCachedJobs[cachedJobId] = true end
+			task.spawn(function()
+				Luna:Notification({
+					Title = "Routing Overload", 
+					Content = "Target Profile full or inaccessible! Falling back to Random Server Hopper.", 
+					Icon = "warning"
+				})
+			end)
+		else
+			updateUIRunsStatus("Executing Random Server Hop...")
+		end
+		
+		_G.ConsecutiveHopAttempts = 0
+		_G.LastTargetedJobId = nil
 		doServerHop()
 	end
 end
