@@ -4139,8 +4139,8 @@ local function StartMasterAutoDungeon()
 						end
 						task.wait(1)
 					else
-						if (door.Position - root.Position).Magnitude > 15 then
-							preventFling(door.CFrame * CFrame.new(0, 0, 6))
+						if (door.Position - root.Position).Magnitude > 13 then
+							preventFling(door.CFrame * CFrame.new(0, 0, 5))
 							task.wait(1)
 						else
 							roomState = "OPEN_DOOR"
