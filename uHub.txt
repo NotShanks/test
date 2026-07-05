@@ -346,7 +346,7 @@ local function sendWebhookNotification(statusMessage)
 					{["name"] = "Completed Runs", ["value"] = tostring(_G.KingsRuinsCompletedCount), ["inline"] = true},
 					{["name"] = "Update", ["value"] = statusMessage, ["inline"] = false}
 				},
-				["timestamp"] = DateTime.now():ToISO8601Value()
+				["timestamp"] = os.date("!Y-%m-%dT%H:%M:%SZ") -- Native compliant ISO-8601 UTC timestamp
 			}}
 		}
 		
@@ -469,6 +469,40 @@ local function getTargetServerFromCache()
 	end
 	
 	return bestJobId
+end
+
+local function doServerHop()
+	local TeleportService = game:GetService("TeleportService")
+	local PlaceId = game.PlaceId
+	local JobId = game.JobId
+	
+	local success, result = pcall(function()
+		local servers = {}
+		-- Fetches public servers while excluding full instances
+		local req = game:HttpGet("https://games.roblox.com/v1/games/" .. PlaceId .. "/servers/Public?sortOrder=Desc&limit=100&excludeFullGames=true")
+		local body = HttpService:JSONDecode(req)
+
+		if body and body.data then
+			for _, v in pairs(body.data) do
+				if type(v) == "table" and tonumber(v.playing) and tonumber(v.maxPlayers) then
+					if v.playing < v.maxPlayers and v.id ~= JobId then
+						table.insert(servers, v.id)
+					end
+				end
+			end
+		end
+
+		if #servers > 0 then
+			local selectedInstance = servers[math.random(1, #servers)]
+			TeleportService:TeleportToPlaceInstance(PlaceId, selectedInstance, Player)
+		else
+			warn("Utility Hub: No available public servers found via API.")
+		end
+	end)
+	
+	if not success then
+		warn("Utility Hub Hopper Error: " .. tostring(result))
+	end
 end
 
 local function executeProjectedServerHop()
@@ -862,9 +896,9 @@ local function GetIcon(icon, source)
 		end
 	else	
 		if icon ~= nil and IconModule[source] then
-			return IconModule[source][icon]
+			return IconModule[source][icon] or ""
 		else
-			return nil
+			return ""
 		end
 	end
 end
@@ -1259,7 +1293,8 @@ function Luna:Notification(data)
 
 		newNotification.Title.Text = data.Title
 		newNotification.Description.Text = data.Content 
-		newNotification.Icon.Image = GetIcon(data.Icon, data.ImageSource)
+		local selectedIcon = GetIcon(data.Icon, data.ImageSource)
+		newNotification.Icon.Image = (selectedIcon ~= nil and selectedIcon ~= "") and selectedIcon or "rbxassetid://10723434557"
 
 		newNotification.BackgroundTransparency = 1
 		newNotification.Title.TextTransparency = 1
