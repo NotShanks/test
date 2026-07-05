@@ -350,9 +350,6 @@ local function updateUIRunsStatus(text)
 end
 
 -- ==========================================
--- DISCORD WEBHOOK SYSTEM
--- ==========================================
--- ==========================================
 -- DISCORD WEBHOOK SYSTEM & STATS INITIALIZATION
 -- ==========================================
 local startupTime = os.time()
@@ -379,80 +376,87 @@ local function sendWebhookNotification(statusState, statusMessage)
 	isSendingWebhook = true
 	
 	task.spawn(function()
-		local currentGold = 0
-		pcall(function()
-			if Player:FindFirstChild("Data") and Player.Data:FindFirstChild("Gold") then
-				currentGold = Player.Data.Gold.Value
-			end
-		end)
-		if initialGold == 0 and currentGold > 0 then
-			initialGold = currentGold
-		end
-
-		local goldGained = math.max(0, currentGold - initialGold)
-		local elapsedSeconds = os.time() - startupTime
-		local elapsedMinutes = elapsedSeconds / 60
-		local goldPerMin = elapsedMinutes > 0 and math.floor(goldGained / elapsedMinutes) or 0
-
-		-- Format Uptime
-		local hours = math.floor(elapsedSeconds / 3600)
-		local minutes = math.floor((elapsedSeconds % 3600) / 60)
-		local seconds = elapsedSeconds % 60
-		local uptimeStr = string.format("%dh %dm %ds", hours, minutes, seconds)
-
-		-- Dynamic state colors
-		local embedColor = 3066993 -- Active emerald green default
-		local failsafeStr = "🟢 Healthy"
-
-		if statusState == "FAILSAFE" then
-			embedColor = 16753920 -- Safety Amber Orange
-			failsafeStr = "⚠️ Tripped"
-		elseif statusState == "TERMINATED" then
-			embedColor = 16711680 -- Crimson Red
-			failsafeStr = "🔴 Offline"
-		end
-
-		local shortJobId = game.JobId ~= "" and string.sub(game.JobId, 1, 8) or "Solo/Lobby"
-
-		local data = {
-			["embeds"] = {{
-				["title"] = "Utility Hub - Real-Time Dashboard",
-				["color"] = embedColor,
-				["description"] = "**Current Activity:**\n`" .. statusMessage .. "`",
-				["fields"] = {
-					-- Row 1: Session Health
-					{["name"] = "⏱️ Uptime", ["value"] = "**" .. uptimeStr .. "**", ["inline"] = true},
-					{["name"] = "⚔️ Dungeons Cleared", ["value"] = "**" .. tostring(_G.KingsRuinsCompletedCount) .. "**", ["inline"] = true},
-					{["name"] = "🪙 Current Gold", ["value"] = "**" .. tostring(currentGold) .. "**", ["inline"] = true},
-					-- Row 2: Farming Stats
-					{["name"] = "🌐 Server Node", ["value"] = "**" .. shortJobId .. "**", ["inline"] = true},
-					{["name"] = "⛏️ Grand Ores Left", ["value"] = "**" .. tostring(_G.GrandOresLeft) .. "**", ["inline"] = true},
-					{["name"] = "📈 Gold / Min", ["value"] = "**" .. tostring(goldPerMin) .. "**", ["inline"] = true},
-					-- Row 3: Account Assets
-					{["name"] = "🛡️ Failsafe Status", ["value"] = "**" .. failsafeStr .. "**", ["inline"] = true},
-					{["name"] = "📦 Chests Left", ["value"] = "**" .. tostring(_G.ChestsLeft) .. "**", ["inline"] = true},
-					{["name"] = "💎 Session Yield", ["value"] = "**+" .. tostring(goldGained) .. " Gold**", ["inline"] = true}
-				},
-				["footer"] = {["text"] = "Utility Hub Client Automated Logs"},
-				["timestamp"] = os.date("!Y-%m-%dT%H:%M:%SZ")
-			}}
-		}
-		
-		local headers = {["Content-Type"] = "application/json"}
-		local payload = HttpService:JSONEncode(data)
-		
-		local req = syn and syn.request or http and http.request or http_request or fluxus and fluxus.request or request
-		if req then
+		local success, err = pcall(function()
+			local currentGold = 0
 			pcall(function()
+				if Player:FindFirstChild("Data") and Player.Data:FindFirstChild("Gold") then
+					currentGold = Player.Data.Gold.Value
+				end
+			end)
+			if initialGold == 0 and currentGold > 0 then
+				initialGold = currentGold
+			end
+
+			local goldGained = math.max(0, currentGold - initialGold)
+			local elapsedSeconds = os.time() - startupTime
+			local elapsedMinutes = elapsedSeconds / 60
+			local goldPerMin = elapsedMinutes > 0 and math.floor(goldGained / elapsedMinutes) or 0
+
+			-- Format Uptime
+			local hours = math.floor(elapsedSeconds / 3600)
+			local minutes = math.floor((elapsedSeconds % 3600) / 60)
+			local seconds = elapsedSeconds % 60
+			local uptimeStr = string.format("%dh %dm %ds", hours, minutes, seconds)
+
+			-- Dynamic state colors
+			local embedColor = 3066993 -- Active emerald green default
+			local failsafeStr = "🟢 Healthy"
+
+			if statusState == "FAILSAFE" then
+				embedColor = 16753920 -- Safety Amber Orange
+				failsafeStr = "⚠️ Tripped"
+			elseif statusState == "TERMINATED" then
+				embedColor = 16711680 -- Crimson Red
+				failsafeStr = "🔴 Offline"
+			end
+
+			local shortJobId = game.JobId ~= "" and string.sub(game.JobId, 1, 8) or "Solo/Lobby"
+
+			local data = {
+				["content"] = "", -- Provided to prevent payload rejections on third-party proxy platforms
+				["embeds"] = {{
+					["title"] = "Utility Hub - Real-Time Dashboard",
+					["color"] = embedColor,
+					["description"] = "**Current Activity:**\n`" .. statusMessage .. "`",
+					["fields"] = {
+						-- Row 1: Session Health
+						{["name"] = "⏱️ Uptime", ["value"] = "**" .. uptimeStr .. "**", ["inline"] = true},
+						{["name"] = "⚔️ Dungeons Cleared", ["value"] = "**" .. tostring(_G.KingsRuinsCompletedCount) .. "**", ["inline"] = true},
+						{["name"] = "🪙 Current Gold", ["value"] = "**" .. tostring(currentGold) .. "**", ["inline"] = true},
+						-- Row 2: Farming Stats
+						{["name"] = "🌐 Server Node", ["value"] = "**" .. shortJobId .. "**", ["inline"] = true},
+						{["name"] = "⛏️ Grand Ores Left", ["value"] = "**" .. tostring(_G.GrandOresLeft) .. "**", ["inline"] = true},
+						{["name"] = "📈 Gold / Min", ["value"] = "**" .. tostring(goldPerMin) .. "**", ["inline"] = true},
+						-- Row 3: Account Assets
+						{["name"] = "🛡️ Failsafe Status", ["value"] = "**" .. failsafeStr .. "**", ["inline"] = true},
+						{["name"] = "📦 Chests Left", ["value"] = "**" .. tostring(_G.ChestsLeft) .. "**", ["inline"] = true},
+						{["name"] = "💎 Session Yield", ["value"] = "**+" .. tostring(goldGained) .. " Gold**", ["inline"] = true}
+					},
+					["footer"] = {["text"] = "Utility Hub Client Automated Logs"},
+					["timestamp"] = os.date("!Y-%m-%dT%H:%M:%SZ")
+				}}
+			}
+			
+			local headers = {["Content-Type"] = "application/json"}
+			local payload = HttpService:JSONEncode(data)
+			
+			-- Order resolved specifically to bypass mock environments on non-standard executors
+			local req = request or http_request or (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request)
+			if req then
 				local hasMessageId = (_G.DiscordMessageId and _G.DiscordMessageId ~= "")
-				local targetUrl = _G.DiscordWebhookURL
+				local cleanUrl = string.gsub(_G.DiscordWebhookURL, "%s+", "") -- Sanitize whitespaces
+				local targetUrl = cleanUrl
 				local httpMethod = "POST"
 
 				if hasMessageId then
-					targetUrl = _G.DiscordWebhookURL .. "/messages/" .. _G.DiscordMessageId
+					targetUrl = cleanUrl .. "/messages/" .. _G.DiscordMessageId
 					httpMethod = "PATCH"
 				else
-					targetUrl = _G.DiscordWebhookURL .. "?wait=true"
+					if not string.find(cleanUrl, "%?") then
+						targetUrl = cleanUrl .. "?wait=true"
+					else
+						targetUrl = cleanUrl .. "&wait=true"
+					end
 				end
 
 				local res = req({
@@ -462,16 +466,26 @@ local function sendWebhookNotification(statusState, statusMessage)
 					Body = payload
 				})
 
-				if not hasMessageId and res and res.Body then
-					local decoded = HttpService:JSONDecode(res.Body)
-					if decoded and decoded.id then
-						_G.DiscordMessageId = decoded.id
-						saveConfig()
+				-- Check both case-sensitive variations of response payloads
+				if not hasMessageId and res then
+					local bodyText = res.Body or res.body
+					if bodyText then
+						local decoded = HttpService:JSONDecode(bodyText)
+						if decoded and decoded.id then
+							_G.DiscordMessageId = decoded.id
+							saveConfig()
+						end
 					end
 				end
-			end)
+			else
+				warn("Utility Hub Webhook: No valid request function found on this executor.")
+			end
+		end)
+		
+		if not success then
+			warn("Utility Hub Webhook dispatch encountered an error: " .. tostring(err))
 		end
-		isSendingWebhook = false
+		isSendingWebhook = false -- Safe unlock guaranteed
 	end)
 end
 
@@ -5525,10 +5539,10 @@ local webhookInput = secWebhook:CreateInput({
 	PlaceholderText = "Paste Discord Webhook URL here...",
 	Enter = true,
 	Callback = function(text)
-		-- Allows custom anti-ratelimit proxy domains natively
-		if text == "" or string.find(text, "api/webhooks") then
-			_G.DiscordWebhookURL = text
-			-- Clear old cached MessageId to start fresh on a new webhook address
+		local sanitizedText = string.gsub(text, "%s+", "") -- Remove copy-pasted whitespace or line breaks
+		if sanitizedText == "" or string.find(sanitizedText, "api/webhooks") then
+			_G.DiscordWebhookURL = sanitizedText
+			-- Reset cached MessageId to establish a fresh card on configuration shifts
 			_G.DiscordMessageId = ""
 			saveConfig()
 			sendWebhookNotification("ACTIVE", "Monitoring profile connected successfully.")
