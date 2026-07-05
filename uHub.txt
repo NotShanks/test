@@ -443,7 +443,6 @@ local function sendWebhookNotification(statusState, statusMessage)
 				currentGold = Player.Data.Gold.Value
 			end
 			
-			-- Capture start conditions only once for the entire persistent session
 			if _G.InitialGold == 0 and currentGold > 0 then
 				_G.InitialGold = currentGold
 			end
@@ -451,22 +450,20 @@ local function sendWebhookNotification(statusState, statusMessage)
 				_G.PreviousGold = currentGold
 			end
 			
-			-- Track the session's overall gained gold strictly
 			local goldGained = math.max(0, currentGold - _G.InitialGold)
 			if goldGained > _G.HighestGoldGained then
 				_G.HighestGoldGained = goldGained
 			end
 			
-			-- Check how the gold shifted purely between this pulse and the last one
 			local goldShift = currentGold - _G.PreviousGold
 			if goldShift > 0 then
 				_G.RecentDiffText = "🟢 📈 +" .. FormatNumber(goldShift)
 			elseif goldShift < 0 then
 				_G.RecentDiffText = "🔴 📉 " .. FormatNumber(goldShift)
 			end
-			_G.PreviousGold = currentGold -- Anchor for next execution
+			_G.PreviousGold = currentGold 
 			
-			saveConfig() -- Rapid save locks all data tightly to LocalStorage preventing loss across teleports
+			saveConfig()
 
 			local elapsedSeconds = math.max(0, os.time() - _G.StartupTime)
 			local elapsedMinutes = elapsedSeconds / 60
@@ -496,17 +493,14 @@ local function sendWebhookNotification(statusState, statusMessage)
 					["color"] = embedColor,
 					["description"] = "**Current Activity:**\n`" .. (statusMessage ~= "" and statusMessage or "N/A") .. "`",
 					["fields"] = {
-						-- Row 1: Session Health
 						{["name"] = "⏱️ Persistent Uptime", ["value"] = "**" .. uptimeStr .. "**", ["inline"] = true},
 						{["name"] = "⚔️ Dungeons Cleared", ["value"] = "**" .. FormatNumber(_G.KingsRuinsCompletedCount) .. "**", ["inline"] = true},
 						{["name"] = "📈 Est. Gold / Min", ["value"] = "**+" .. FormatNumber(goldPerMin) .. "**", ["inline"] = true},
 						
-						-- Row 2: Live Economy Tracking
 						{["name"] = "🪙 Current Gold", ["value"] = "**" .. FormatNumber(currentGold) .. "**", ["inline"] = true},
 						{["name"] = "💎 Total Session Yield", ["value"] = "**+" .. FormatNumber(goldGained) .. "**", ["inline"] = true},
 						{["name"] = "📊 Recent Action Shift", ["value"] = "**" .. _G.RecentDiffText .. "**", ["inline"] = true},
 						
-						-- Row 3: History & Hardware
 						{["name"] = "👑 Highest Session Gain", ["value"] = "**+" .. FormatNumber(_G.HighestGoldGained) .. "**", ["inline"] = true},
 						{["name"] = "🛡️ Failsafe Status", ["value"] = "**" .. failsafeStr .. "**", ["inline"] = true},
 						{["name"] = "\u{200B}", ["value"] = "\u{200B}", ["inline"] = true}
@@ -516,18 +510,16 @@ local function sendWebhookNotification(statusState, statusMessage)
 			}
 			
 			local jsonPayload = HttpService:JSONEncode(payload)
-			
-			-- Safely extract API string discarding invalid characters attached from UI input box
 			local cleanUrl = string.gsub(_G.DiscordWebhookURL, "%s+", "") 
 			local baseUrl = string.match(cleanUrl, "^([^?]+)")
 
 			local reqHeaders = { 
 				["Content-Type"] = "application/json",
-				["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36" 
+				["User-Agent"] = "UtilityHub/Client.Network" 
 			}
 
-			if not _G.DiscordMessageId then
-				-- Bootstraps a Brand-New Dashboard Message
+			if not _G.DiscordMessageId or _G.DiscordMessageId == "" then
+				-- Initial Boot: Forces creation and strictly locks ID to a String to stop JSON corruption
 				local res = httprequest({ 
 					Url = baseUrl .. "?wait=true", 
 					Method = "POST", 
@@ -539,27 +531,18 @@ local function sendWebhookNotification(statusState, statusMessage)
 					local bodyTxt = res.Body or res.body
 					local successDec, dataDec = pcall(function() return HttpService:JSONDecode(bodyTxt) end)
 					if successDec and dataDec and dataDec.id then 
-						_G.DiscordMessageId = dataDec.id 
+						_G.DiscordMessageId = tostring(dataDec.id)
 						saveConfig() 
 					end
 				end
 			else
-				-- Edits Pre-Existing Message Silently
-				local patchRes = httprequest({ 
+				-- Persistent Editor: Wiping functions permanently disabled. This will gracefully fail/warn but never loop-spawn!
+				httprequest({ 
 					Url = baseUrl .. "/messages/" .. tostring(_G.DiscordMessageId), 
 					Method = "PATCH", 
 					Headers = reqHeaders, 
 					Body = jsonPayload 
 				})
-				
-				if patchRes then
-					local responseCode = patchRes.StatusCode or patchRes.status_code or patchRes.code
-					-- Wipe message memory ONLY on 404 (Not Found / Manually Deleted in discord channel) to prevent new messages spam
-					if responseCode and responseCode == 404 then
-						_G.DiscordMessageId = nil
-						saveConfig()
-					end
-				end
 			end
 		end)
 		
@@ -4647,54 +4630,47 @@ local function runKingsRuinsObserver()
 					return
 				end
 
-				-- Threat Detection Layer Tracking
-				local playerInZone1 = false
-				local playerInZone2 = false
-				local playerInZone3 = false
-				
 				local centerPos = teleportModel:GetPivot().Position
-
-				for _, otherPlayer in pairs(Players:GetPlayers()) do
-					if otherPlayer ~= Player and otherPlayer.Character and otherPlayer.Character:FindFirstChild("HumanoidRootPart") then
-						local otherHRP = otherPlayer.Character.HumanoidRootPart
-						local distance = (otherHRP.Position - centerPos).Magnitude
-						
-						local isAuth = isPlayerAuthorized(otherPlayer.Name)
-						local isThreat = true
-						
-						-- TIE-BREAKER LOGIC: Alts now treat each other as threats to force SOLO entry. 
-						-- The alt with the mathematically lower UserId wins the priority and stays on the pad, 
-						-- while the other alt gracefully waits in Zone 3/outside for them to teleport.
-						if isAuth then
-							isThreat = (otherPlayer.UserId < Player.UserId)
-						end
-						
-						if isThreat then
-							if distance <= 45 then playerInZone1 = true end  -- Danger Close
-							if distance <= 130 then playerInZone2 = true end -- Line of Sight
-							if distance <= 250 then playerInZone3 = true end -- Local Radar
-						end
-					end
-				end
-
+				
+				-- Scan the Lobby First
 				local lobbyPlayers = getLobbyPlayers()
 				local amInLobby = table.find(lobbyPlayers, Player.Name) ~= nil
 				local areOthersInLobby = false
 				
 				for _, name in ipairs(lobbyPlayers) do
 					if name ~= Player.Name then
-						local p = Players:FindFirstChild(name)
-						local isAuth = isPlayerAuthorized(name)
-						local isThreat = true
-						
-						-- Match the tie-breaker for players strictly already standing inside the party circle
-						if isAuth and p then
-							isThreat = (p.UserId < Player.UserId)
-						end
-						
-						if isThreat then
+						if not isPlayerAuthorized(name) then
 							areOthersInLobby = true
-							break
+						end
+					end
+				end
+
+				-- Threat Detection Layer Tracking
+				local playerInZone1 = false
+				local playerInZone2 = false
+				local playerInZone3 = false
+
+				for _, otherPlayer in pairs(Players:GetPlayers()) do
+					if otherPlayer ~= Player and otherPlayer.Character and otherPlayer.Character:FindFirstChild("HumanoidRootPart") then
+						local otherHRP = otherPlayer.Character.HumanoidRootPart
+						local distance = (otherHRP.Position - centerPos).Magnitude
+						
+						if isPlayerAuthorized(otherPlayer.Name) then
+							-- ALTS TIE-BREAKER LOGIC
+							if table.find(lobbyPlayers, otherPlayer.Name) then
+								-- Alt is ALREADY staging a run. Treat as hard block so we wait for them to finish.
+								playerInZone1 = true 
+								playerInZone2 = true
+							elseif otherPlayer.UserId < Player.UserId and distance <= 350 then
+								-- Alt has mathematical priority and is in our vicinity. Yield entirely.
+								playerInZone1 = true
+								playerInZone2 = true
+							end
+						else
+							-- Random Stranger Threat Tracking
+							if distance <= 45 then playerInZone1 = true end  -- Danger Close
+							if distance <= 130 then playerInZone2 = true end -- Line of Sight
+							if distance <= 250 then playerInZone3 = true end -- Local Radar
 						end
 					end
 				end
@@ -4710,46 +4686,51 @@ local function runKingsRuinsObserver()
 				local parsedSeconds = tonumber(string.match(startsInText, "%d+")) or 999
 				local lobbyTimerActive = startsInText ~= "" and startsInText ~= "TELEPORTING PARTY"
 
+				local function forceEvacuate()
+					executeKingsRuinsLeave()
+					-- Physics Backup: Physically teleport the player ~70 studs backwards away from the pad to force them out of the list if the button fails!
+					pcall(function()
+						local hrp = Player.Character.HumanoidRootPart
+						local offsetDir = (hrp.Position - centerPos).Unit
+						if offsetDir.Magnitude ~= offsetDir.Magnitude or offsetDir.Magnitude == 0 then offsetDir = Vector3.new(1,0,0) end
+						hrp.CFrame = CFrame.new(centerPos + (offsetDir * 70))
+					end)
+				end
+
 				if amInLobby then
 					if areOthersInLobby then
-						updateUIRunsStatus("Others inside lobby | Evacuating")
-						executeKingsRuinsLeave()
-						Luna:Notification({Title = "Kings Ruins Alarm", Content = "Other players inside lobby. Evacuating...", Icon = "warning"})
+						updateUIRunsStatus("Strangers inside lobby | Evacuating")
+						forceEvacuate()
+						Luna:Notification({Title = "Kings Ruins Alarm", Content = "Stranger joined your lobby! Evacuating...", Icon = "warning"})
 						task.wait(2)
 						return
 					end
 
 					-- Evaluative Retreat Logics based on Countdown Risk vs Position
 					if playerInZone1 then
-						-- Basically on top of the entrance
 						if not lobbyTimerActive or parsedSeconds > 2 then
-							updateUIRunsStatus("Player in CORE ZONE! | Evacuating")
-							executeKingsRuinsLeave()
-							Luna:Notification({Title = "Kings Ruins Alarm", Content = "Player dangerously close! Evacuating...", Icon = "warning"})
+							updateUIRunsStatus("Player/Alt in CORE ZONE! | Evacuating")
+							forceEvacuate()
+							Luna:Notification({Title = "Kings Ruins Alarm", Content = "Entity dangerously close! Evacuating...", Icon = "warning"})
 							task.wait(2)
 							return
 						end
 					elseif playerInZone2 then
-						-- Line of Sight Approach
 						if not lobbyTimerActive or parsedSeconds > 15 then
-							updateUIRunsStatus("Player approaching Mid | Evacuating")
-							executeKingsRuinsLeave()
-							Luna:Notification({Title = "Kings Ruins Alarm", Content = "Player spotted running toward entrance. Evacuating...", Icon = "warning"})
+							updateUIRunsStatus("Player/Alt approaching Mid | Evacuating")
+							forceEvacuate()
+							Luna:Notification({Title = "Kings Ruins Alarm", Content = "Entity approaching entrance. Evacuating...", Icon = "warning"})
 							task.wait(2)
 							return
 						end
-					elseif playerInZone3 then
-						-- Within 250 radar limits; let's hold position but monitor intently
 					end
 					
 					updateUIRunsStatus("Waiting for start (" .. startsInText .. ")")
 				else
 					-- We are NOT inside the lobby yet
 					if playerInZone2 then 
-						-- Someone is 130 studs near the stairs; Do NOT walk into the trap yet.
-						updateUIRunsStatus("Sector blocked by players | Waiting hidden")
+						updateUIRunsStatus("Sector blocked by player/alt | Waiting hidden")
 					else
-						-- The coast is entirely clear up to the 130+ mark
 						if startsInText == "TELEPORTING PARTY" then
 							updateUIRunsStatus("Waiting for portal status to clear")
 						else
@@ -5720,17 +5701,18 @@ local webhookInput = secWebhook:CreateInput({
 	PlaceholderText = "Paste Discord Webhook URL here...",
 	Enter = true,
 	Callback = function(text)
-		local sanitizedText = string.gsub(text, "%s+", "") -- Remove whitespaces
+		local sanitizedText = string.gsub(text, "%s+", "") 
+		local currentSavedUrl = _G.DiscordWebhookURL and string.gsub(_G.DiscordWebhookURL, "%s+", "") or ""
 		
-		-- FIX: Stop Luna UI's automatic initialization trigger from wiping the Message ID on server hop!
-		if sanitizedText == _G.DiscordWebhookURL then return end 
+		-- FIX: Strict equivalency check completely prevents Luna UI from automatically firing the reset upon load!
+		if sanitizedText == currentSavedUrl then return end 
 		
 		if sanitizedText == "" or string.find(sanitizedText, "api/webhooks") then
 			_G.DiscordWebhookURL = sanitizedText
-			_G.DiscordMessageId = nil -- Now it ONLY resets if a distinctly new URL is pasted by a human
+			_G.DiscordMessageId = nil -- The only time ID wipes now is if a literal new URL is placed
 			
-			saveSharedConfig() -- Writes to the SharedConfig file instantly
-			saveConfig()       -- Save state memory deletion
+			saveSharedConfig() 
+			saveConfig()       
 			sendWebhookNotification("ACTIVE", "Monitoring profile connected successfully.")
 		else
 			Luna:Notification({Title = "Webhook Config", Content = "Invalid Webhook URL pattern.", Icon = "warning"})
