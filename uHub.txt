@@ -4655,23 +4655,47 @@ local function runKingsRuinsObserver()
 				local centerPos = teleportModel:GetPivot().Position
 
 				for _, otherPlayer in pairs(Players:GetPlayers()) do
-					if otherPlayer ~= Player and not isPlayerAuthorized(otherPlayer.Name) and otherPlayer.Character and otherPlayer.Character:FindFirstChild("HumanoidRootPart") then
+					if otherPlayer ~= Player and otherPlayer.Character and otherPlayer.Character:FindFirstChild("HumanoidRootPart") then
 						local otherHRP = otherPlayer.Character.HumanoidRootPart
 						local distance = (otherHRP.Position - centerPos).Magnitude
 						
-						if distance <= 45 then playerInZone1 = true end  -- Danger Close
-						if distance <= 130 then playerInZone2 = true end -- Line of Sight
-						if distance <= 250 then playerInZone3 = true end -- Local Radar
+						local isAuth = isPlayerAuthorized(otherPlayer.Name)
+						local isThreat = true
+						
+						-- TIE-BREAKER LOGIC: Alts now treat each other as threats to force SOLO entry. 
+						-- The alt with the mathematically lower UserId wins the priority and stays on the pad, 
+						-- while the other alt gracefully waits in Zone 3/outside for them to teleport.
+						if isAuth then
+							isThreat = (otherPlayer.UserId < Player.UserId)
+						end
+						
+						if isThreat then
+							if distance <= 45 then playerInZone1 = true end  -- Danger Close
+							if distance <= 130 then playerInZone2 = true end -- Line of Sight
+							if distance <= 250 then playerInZone3 = true end -- Local Radar
+						end
 					end
 				end
 
 				local lobbyPlayers = getLobbyPlayers()
 				local amInLobby = table.find(lobbyPlayers, Player.Name) ~= nil
 				local areOthersInLobby = false
+				
 				for _, name in ipairs(lobbyPlayers) do
-					if name ~= Player.Name and not isPlayerAuthorized(name) then
-						areOthersInLobby = true
-						break
+					if name ~= Player.Name then
+						local p = Players:FindFirstChild(name)
+						local isAuth = isPlayerAuthorized(name)
+						local isThreat = true
+						
+						-- Match the tie-breaker for players strictly already standing inside the party circle
+						if isAuth and p then
+							isThreat = (p.UserId < Player.UserId)
+						end
+						
+						if isThreat then
+							areOthersInLobby = true
+							break
+						end
 					end
 				end
 
@@ -5697,10 +5721,16 @@ local webhookInput = secWebhook:CreateInput({
 	Enter = true,
 	Callback = function(text)
 		local sanitizedText = string.gsub(text, "%s+", "") -- Remove whitespaces
+		
+		-- FIX: Stop Luna UI's automatic initialization trigger from wiping the Message ID on server hop!
+		if sanitizedText == _G.DiscordWebhookURL then return end 
+		
 		if sanitizedText == "" or string.find(sanitizedText, "api/webhooks") then
 			_G.DiscordWebhookURL = sanitizedText
-			_G.DiscordMessageId = nil -- Reset in-memory ID on URL shifts
+			_G.DiscordMessageId = nil -- Now it ONLY resets if a distinctly new URL is pasted by a human
+			
 			saveSharedConfig() -- Writes to the SharedConfig file instantly
+			saveConfig()       -- Save state memory deletion
 			sendWebhookNotification("ACTIVE", "Monitoring profile connected successfully.")
 		else
 			Luna:Notification({Title = "Webhook Config", Content = "Invalid Webhook URL pattern.", Icon = "warning"})
