@@ -40,6 +40,12 @@ _G.AutoTreasure = false
 _G.EnableTweeningSafety = false 
 _G.SavedOriginalPosition = nil
 
+-- Kings Ruins Automation Variables
+_G.AutoKingsRuins = false
+local originalCameraType = Camera.CameraType
+local originalCameraCFrame = Camera.CFrame
+local visualRadiusSphere = nil
+
 -- Sea World
 _G.AutoAmbrosia = false
 _G.AutoIchor = false
@@ -49,6 +55,34 @@ _G.CursedFinger = false
 local clickConnectionBegan, clickConnectionEnded, clickRunService
 local gatesClickConnectionBegan, gatesClickConnectionEnded, gatesClickRunService
 local specConnectionBegan, specConnectionEnded, specRunService
+
+local configFileName = "Luna_UtilityHub_Config.json"
+
+local function saveConfig()
+	if writefile then
+		local data = {
+			AutoKingsRuins = _G.AutoKingsRuins,
+			EnableTweeningSafety = _G.EnableTweeningSafety
+		}
+		pcall(function()
+			writefile(configFileName, HttpService:JSONEncode(data))
+		end)
+	end
+end
+
+local function loadConfig()
+	if isfile and isfile(configFileName) then
+		local success, data = pcall(function()
+			return HttpService:JSONDecode(readfile(configFileName))
+		end)
+		if success and data then
+			_G.AutoKingsRuins = data.AutoKingsRuins or false
+			_G.EnableTweeningSafety = data.EnableTweeningSafety or false
+		end
+	end
+end
+
+loadConfig()
 
 local function isEntityAlive(entity)
 	if not entity then return false end
@@ -222,6 +256,51 @@ local function getSeasonTimerText()
 	return string.format("%s in %dm %ds", actionText, minutes, seconds)
 end
 
+local function getSeasonTimeRemaining()
+	local effectsFolder = workspace:FindFirstChild("Effects")
+	local dayValueObj = effectsFolder and effectsFolder:FindFirstChild("Day")
+	local ui = Player:FindFirstChild("PlayerGui")
+	local timeTextObj = ui and ui:FindFirstChild("Moves") and ui.Moves:FindFirstChild("Bars") and ui.Moves.Bars:FindFirstChild("Time")
+
+	if not dayValueObj or not timeTextObj then
+		return "Unknown", 9999
+	end
+
+	local currentDay = dayValueObj.Value
+	local remainder = currentDay % 8
+	if remainder == 0 then remainder = 8 end
+
+	local daysDifference = 0
+	local isFallOrSpring = false
+
+	if remainder == 3 or remainder == 4 then
+		isFallOrSpring = true
+		daysDifference = 5 - remainder
+	elseif remainder == 7 or remainder == 8 then
+		isFallOrSpring = true
+		daysDifference = 9 - remainder
+	elseif remainder == 1 or remainder == 2 then
+		daysDifference = 3 - remainder 
+	elseif remainder == 5 or remainder == 6 then
+		daysDifference = 7 - remainder 
+	end
+
+	local timeText = timeTextObj.Text
+	local hoursStr, minutesStr = string.match(timeText, "(%d+):(%d+)")
+	if not hoursStr or not minutesStr then return "Unknown", 9999 end
+
+	local currentTotalGameMins = (tonumber(hoursStr) * 60) + tonumber(minutesStr)
+	local gameMinsRemainingToday = IN_GAME_MINUTES_PER_DAY - currentTotalGameMins
+	local totalGameMinsLeft = gameMinsRemainingToday + ((daysDifference - 1) * IN_GAME_MINUTES_PER_DAY)
+	local realSecondsLeft = totalGameMinsLeft * REAL_SECONDS_PER_GAME_MIN
+
+	if isFallOrSpring then
+		return "Active", realSecondsLeft
+	else
+		return "Inactive", realSecondsLeft
+	end
+end
+
 _G.CancelTween = false
 local function doSmartTween(targetPos)
 	if _G.EnableTweeningSafety == false then
@@ -236,16 +315,13 @@ local function doSmartTween(targetPos)
 
 	local tpSpeed = 200 
 
-	-- 1. Mimic IY "Fly" by disabling Humanoid physical interactions
 	humanoid.PlatformStand = true 
 	
-	-- 2. Suspend gravity entirely so the server doesn't think you are falling
 	local bv = Instance.new("BodyVelocity")
 	bv.Velocity = Vector3.new(0, 0, 0)
 	bv.MaxForce = Vector3.new(9e9, 9e9, 9e9)
 	bv.Parent = hrp
 
-	-- 3. Strict Noclip (No FloatPad needed anymore, it causes clipping)
 	local noclipConn = RunService.Stepped:Connect(function()
 		for _, v in pairs(char:GetDescendants()) do
 			if v:IsA("BasePart") and v.CanCollide then
@@ -268,7 +344,6 @@ local function doSmartTween(targetPos)
 			local currentPos = hrp.Position
 			local dist = (targetVec - currentPos).Magnitude
 
-			-- Stopping threshold
 			if dist < 5 then
 				reached = true
 				if tpConnection then tpConnection:Disconnect() end
@@ -286,7 +361,6 @@ local function doSmartTween(targetPos)
 				char:TranslateBy(moveAmount)
 			end
 			
-			-- 4. Keep zeroing momentum so physics doesn't fight the translation
 			hrp.Velocity = Vector3.zero
 			hrp.AssemblyLinearVelocity = Vector3.zero
 		end)
@@ -296,7 +370,6 @@ local function doSmartTween(targetPos)
 		end
 	end
 
-	-- Execute the smart pathing sequence
 	if not _G.CancelTween then
 		tpWalkTo(hrp.Position + Vector3.new(0, 300, 0))
 	end
@@ -307,12 +380,10 @@ local function doSmartTween(targetPos)
 		tpWalkTo(targetPos + Vector3.new(0, 3, 0))
 	end
 
-	-- 5. Cleanup & Restore State
 	if bv then bv:Destroy() end
 	if noclipConn then noclipConn:Disconnect() end
 	if humanoid then humanoid.PlatformStand = false end
 	
-	-- 6. Zero out momentum at the end so you don't fling upon landing
 	if hrp then
 		hrp.Velocity = Vector3.zero
 		hrp.AssemblyLinearVelocity = Vector3.zero
@@ -388,7 +459,6 @@ local function getGates()
 				local levelObj = gateModel:FindFirstChild("Level", true)
 				local rankObj = gateModel:FindFirstChild("Rank", true)
 				
-				-- Accurate Timer Calculation
 				local timeLeftStr = ""
 				local timeSpawnedObj = gateModel:FindFirstChild("TimeSpawned", true)
 				
@@ -455,7 +525,6 @@ local function countGrandOres()
 	local oresFolder = workspace:FindFirstChild("Ores")
 	if oresFolder then
 		for _, v in pairs(oresFolder:GetChildren()) do
-			-- Removed the "GrandMana" name check
 			local hpValue = v:FindFirstChild("HP")
 			if not hpValue or hpValue.Value > 0 then
 				count = count + 1
@@ -1396,12 +1465,10 @@ function Luna:CreateWindow(WindowSettings)
 			end
 		end
 
-		-- Helper function to transform the card once found
 		local function transformToServerHop(card)
 			if not card then return end
 			card.Visible = true
 			
-			-- Dynamically locate text and image elements inside the card
 			for _, child in pairs(card:GetDescendants()) do
 				if child:IsA("TextLabel") then
 					if child.Text == "Join Script" or string.find(child.Text:lower(), "join") then
@@ -1410,56 +1477,20 @@ function Luna:CreateWindow(WindowSettings)
 						child.Text = "Click to transition to another server"
 					end
 				elseif child:IsA("ImageLabel") then
-					child.Image = "rbxassetid://6023426921" -- Autorenew icon
+					child.Image = "rbxassetid://6023426921"
 					child.ImageColor3 = Color3.fromRGB(123, 201, 201)
 				end
 			end
 			
-			-- Connect the click interaction
 			local interact = card:FindFirstChild("Interact") or card:FindFirstChildWhichIsA("GuiButton", true)
 			if interact and interact:IsA("GuiButton") then
 				interact.MouseButton1Click:Connect(function()
-					local TeleportService = game:GetService("TeleportService")
-					local PlaceId = game.PlaceId
-					local JobId = game.JobId
-					
 					Luna:Notification({
 						Title = "Server Router", 
 						Content = "Searching for active public instances...", 
 						Icon = "autorenew"
 					})
-					
-					local success, result = pcall(function()
-						local servers = {}
-						local req = game:HttpGet("https://games.roblox.com/v1/games/" .. PlaceId .. "/servers/Public?sortOrder=Desc&limit=100&excludeFullGames=true")
-						local body = HttpService:JSONDecode(req)
-
-						if body and body.data then
-							for i, v in next, body.data do
-								if type(v) == "table" and tonumber(v.playing) and tonumber(v.maxPlayers) and v.playing < v.maxPlayers and v.id ~= JobId then
-									table.insert(servers, 1, v.id)
-								end
-							end
-						end
-
-						if #servers > 0 then
-							TeleportService:TeleportToPlaceInstance(PlaceId, servers[math.random(1, #servers)], Player)
-						else
-							Luna:Notification({
-								Title = "Server Router", 
-								Content = "Could not identify any suitable server candidates.", 
-								Icon = "warning"
-							})
-						end
-					end)
-					
-					if not success then
-						Luna:Notification({
-							Title = "Server Router", 
-							Content = "Failed to communicate with server list API.", 
-							Icon = "warning"
-						})
-					end
+					doServerHop()
 				end)
 			end
 		end
@@ -1470,11 +1501,9 @@ function Luna:CreateWindow(WindowSettings)
 			if srv:FindFirstChild("Latency") then srv.Latency.Visible = false end
 			if srv:FindFirstChild("Region") then srv.Region.Visible = false end
 			
-			-- Run with a brief delay to ensure UI elements are completely loaded and rendered
 			task.spawn(function()
 				task.wait(1)
 				
-				-- Scan srv (Server) and db (Dashboard) folders dynamically for the card with precise string matching
 				local joinCard = srv:FindFirstChild("Join") or srv:FindFirstChild("JoinScript") or db:FindFirstChild("Join") or db:FindFirstChild("JoinScript")
 				if not joinCard then
 					local containers = {srv, db}
@@ -1499,11 +1528,10 @@ function Luna:CreateWindow(WindowSettings)
 				end
 			end)
 	
-	if srv:FindFirstChild("Players") then
+			if srv:FindFirstChild("Players") then
 				configureCard(srv.Players, "Season Timer", "", nil, nil)
 				srv.Players.Visible = true
 				pcall(function()
-					-- Increases the card width and text size for readability
 					srv.Players.Size = UDim2.new(1, -10, 0, 80) 
 					if srv.Players:FindFirstChild("Title") then srv.Players.Title.TextSize = 18 end
 					if srv.Players:FindFirstChild("Value") then 
@@ -1529,7 +1557,7 @@ function Luna:CreateWindow(WindowSettings)
 			if fnd:FindFirstChild("InGame") then fnd.InGame.Name = "Gate4" end
 			
 			pcall(function()
-				fnd.Size = UDim2.new(0, 250, 0, 250) -- Extends the Active Gates container upwards/downwards
+				fnd.Size = UDim2.new(0, 250, 0, 250)
 			end)
 		end
 
@@ -1567,7 +1595,6 @@ function Luna:CreateWindow(WindowSettings)
 					local gateName = validGates[i]
 					if gateName then
 						card.Visible = true
-						-- Maps the Gate's actual name to the Title text and hides the small grey text
 						configureCard(card, gateName, "", nil, nil)
 						pcall(function()
 							if card:FindFirstChild("Value") then 
@@ -2001,7 +2028,7 @@ function Luna:CreateWindow(WindowSettings)
 					Callback = function(Value) end,
 				}, ToggleSettings or {})
 
-				ToggleV.Settings = ToggleSettings -- [NEW]: Attaches settings so callbacks can be fired programmatically!
+				ToggleV.Settings = ToggleSettings
 
 				local Toggle = (ToggleSettings.Description ~= nil and ToggleSettings.Description ~= "") and Elements.Template.ToggleDesc:Clone() or Elements.Template.Toggle:Clone()
 				Toggle.Visible = true
@@ -2261,7 +2288,6 @@ function Luna:CreateWindow(WindowSettings)
 	end
 
 	Main.Controls.Close.ImageLabel.MouseButton1Click:Connect(function()
-		-- [NEW]: Kill the teleport queue so it won't re-run on map changes
 		if _G.TeleportConnection then
 			_G.TeleportConnection:Disconnect()
 			_G.TeleportConnection = nil
@@ -2369,7 +2395,6 @@ task.spawn(function()
 		end
 
 		if combatActive then
-			-- Centralized consumable remote firing (1 second throttle)
 			if tick() - lastConsumableFire >= 1 then
 				pcall(function()
 					local remotes = ReplicatedStorage:FindFirstChild("Remotes")
@@ -2387,31 +2412,26 @@ task.spawn(function()
 				end)
 				lastConsumableFire = tick()
 			end
-			-- Dynamic Magic Healing (Below 50% MaxHealth, spams them one-by-one sequentially)
+
 			pcall(function()
 				local char = Player.Character
 				if char and char:FindFirstChild("Health") and char:FindFirstChild("MaxHealth") then
 					local h = char.Health.Value
 					local m = char.MaxHealth.Value
 					
-					-- 0.50 threshold (50%)
 					if m > 0 and (h / m) < 0.50 then
-						-- Throttles the loop to fire the sequence once every 1 second
 						if tick() - lastHealFire >= 1 then
 							lastHealFire = tick()
 							
 							task.spawn(function()
 								local backpack = Player:FindFirstChild("Backpack")
 
-								-- 1) Cure Meadow
 								if backpack then pcall(function() backpack.CureMeadow.ServerScript.Charge:FireServer() end) end
-								task.wait(0.3) -- Delay before next
+								task.wait(0.3)
 								
-								-- 2) Parkour Healer script
 								pcall(function() Player.PlayerGui.Parkour.Script.Healer:FireServer() end)
-								task.wait(0.3) -- Delay before next
+								task.wait(0.3)
 								
-								-- 3) Latric Reclamation
 								if backpack then pcall(function() backpack.LatricReclamation.ServerScript.Charge:FireServer() end) end
 							end)
 						end
@@ -2533,7 +2553,6 @@ end
 local function SlingshotKillOverworld(toggleKey)
 	task.spawn(function()
 		saveOriginalPosition()
-		-- 1. Lock in the exact CFrame from when you toggled the farm on
 		local safeCFrame = _G.SavedOriginalPosition
 
 		local PULLBACK_DISTANCE = 100
@@ -2542,7 +2561,7 @@ local function SlingshotKillOverworld(toggleKey)
 		local FIRE_PERCENT = 1
 		local FAKE_SPEED = 3000
 
-		local mobAges = {} -- Dictionary to track when each mob spawned
+		local mobAges = {}
 		local lastKillTime = tick()
 
 		local function fireODMRemotes(myRoot, targetRoot)
@@ -2568,21 +2587,16 @@ local function SlingshotKillOverworld(toggleKey)
 			local mobsFolder = workspace:FindFirstChild("Mobs")
 			local effects = workspace:FindFirstChild("Effects")
 
-			-- === REGULUS INTERCEPT LOGIC ===
 			local regulus = mobsFolder and mobsFolder:FindFirstChild("Regulus")
 			if regulus and isEntityAlive(regulus) then
-				
-				-- Spawn a separate thread to handle the boss sequence
 				task.spawn(function()
-					-- 1. Turn OFF Auto Mobs programmatically (Visually & Functionally)
 					if _G.ToggleAllMobs then
 						_G.ToggleAllMobs:UpdateState(false)
 						_G.ToggleAllMobs.Settings.Callback(false) 
 					end
 					
-					task.wait(0.5) -- Give the old loop a moment to completely stop
+					task.wait(0.5)
 
-					-- 2. Equip Lightning Axe securely
 					unequipCurrent()
 					task.wait(0.15)
 					ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("BackWeapon"):FireServer("RightWeapon", "LightningAxe", "BackRight", "LightningAxe")
@@ -2590,7 +2604,6 @@ local function SlingshotKillOverworld(toggleKey)
 					loadWeapons()
 					task.wait(0.5)
 					
-					-- Try equipping directly via Humanoid first, fallback to VIM
 					local axe = (Player.Character and Player.Character:FindFirstChild("LightningAxe")) or (Player:FindFirstChild("Backpack") and Player.Backpack:FindFirstChild("LightningAxe"))
 					
 					if axe and Player.Character and Player.Character:FindFirstChild("Humanoid") then
@@ -2602,18 +2615,15 @@ local function SlingshotKillOverworld(toggleKey)
 					end
 					task.wait(0.5)
 
-					-- 3. Turn ON Auto Regulus programmatically
 					if _G.ToggleRegulus then
 						_G.ToggleRegulus:UpdateState(true)
-						_G.ToggleRegulus.Settings.Callback(true) -- This starts KillRegulus() safely
+						_G.ToggleRegulus.Settings.Callback(true)
 					end
 
-					-- 4. Wait until Regulus is dead or despawns
 					while _G.AutoRegulus and regulus:IsDescendantOf(workspace) and isEntityAlive(regulus) do
 						task.wait(0.5)
 					end
 
-					-- 5. Turn OFF Auto Regulus
 					if _G.ToggleRegulus then
 						_G.ToggleRegulus:UpdateState(false)
 						_G.ToggleRegulus.Settings.Callback(false)
@@ -2621,40 +2631,33 @@ local function SlingshotKillOverworld(toggleKey)
 
 					task.wait(0.5)
 
-					-- 6. Turn Auto Mobs back ON (This automatically re-equips Titan Blades and restarts the farm)
 					if _G.ToggleAllMobs then
 						_G.ToggleAllMobs:UpdateState(true)
 						_G.ToggleAllMobs.Settings.Callback(true)
 					end
 				end)
-
-				-- Terminate the current Slingshot thread so it doesn't fight the Regulus thread!
 				return 
 			end
-			-- ===============================
 
 			if mobsFolder and myChar and myChar:FindFirstChild("HumanoidRootPart") then
 				local myRoot = myChar.HumanoidRootPart
 				local validMobs = {}
 
-				-- Clean up deleted mobs from our age tracker to prevent memory leaks
 				for m, _ in pairs(mobAges) do
 					if not m:IsDescendantOf(workspace) then
 						mobAges[m] = nil
 					end
 				end
 
-				-- Gather all alive mobs and track their spawn time
 				for _, v in pairs(mobsFolder:GetChildren()) do
 					if v.Name ~= "Regulus" and v:FindFirstChild("HumanoidRootPart") and isEntityAlive(v) then
 						if not mobAges[v] then
-							mobAges[v] = tick() -- Mark the exact moment we first saw this mob
+							mobAges[v] = tick()
 						end
 						table.insert(validMobs, {mob = v, age = mobAges[v]})
 					end
 				end
 
-				-- Determine if we should throttle
 				local shouldThrottle = true
 				local isGateFinished = false
 				
@@ -2673,7 +2676,6 @@ local function SlingshotKillOverworld(toggleKey)
 								shouldThrottle = false
 							end
 							
-							-- [NEW BYPASS]: If the gate total is under 5 (mini-bosses/small waves), attack immediately.
 							if totalMobs.Value < 5 then
 								shouldThrottle = false
 							end
@@ -2685,20 +2687,15 @@ local function SlingshotKillOverworld(toggleKey)
 					end
 				end
 
-				-- Select Target Logic
 				if #validMobs > 0 and not isGateFinished then
 					if shouldThrottle then
-						-- Lowered buffer: Wait until at least 2 mobs exist. 
-						-- This leaves 1 alive to keep the spawner from breaking.
 						if #validMobs >= 2 then
-							-- Sort by age (smallest tick = oldest mob)
 							table.sort(validMobs, function(a, b) return a.age < b.age end)
 							targetMob = validMobs[1].mob
 						else
 							targetMob = nil 
 						end
 					else
-						-- Final wipe: prioritize oldest just in case
 						table.sort(validMobs, function(a, b) return a.age < b.age end)
 						targetMob = validMobs[1].mob
 					end
@@ -2752,13 +2749,11 @@ local function SlingshotKillOverworld(toggleKey)
 				if camConn then camConn:Disconnect() end
 				if cam then cam.CameraType = Enum.CameraType.Custom end
 				
-				lastKillTime = tick() -- Reset the kill timer after a successful combat loop
+				lastKillTime = tick()
 			else
-				-- IDLE / WAITING PHASE
 				local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
 				if myRoot then
 					stopMomentum(myRoot)
-					-- Teleport to the safe spot while we wait for new spawns
 					if safeCFrame then
 						myRoot.CFrame = safeCFrame
 					end
@@ -2889,42 +2884,39 @@ local isMining = false
 local function GrandOreFarm()
 	task.spawn(function()
 		task.spawn(function()
-				while _G.AutoGrandOre do
-					pcall(function()
-						local char = Player.Character
-						local healthValue = char and char:FindFirstChild("Health")
-						local maxHealthValue = char and char:FindFirstChild("MaxHealth")
+			while _G.AutoGrandOre do
+				pcall(function()
+					local char = Player.Character
+					local healthValue = char and char:FindFirstChild("Health")
+					local maxHealthValue = char and char:FindFirstChild("MaxHealth")
+					
+					if isMining and healthValue and maxHealthValue then
+						local hp = healthValue.Value
+						local maxHp = maxHealthValue.Value
 						
-						if isMining and healthValue and maxHealthValue then
-							local hp = healthValue.Value
-							local maxHp = maxHealthValue.Value
-							
-							-- Spam heals continuously while mining to sustain Frenzy
-							if hp < maxHp then
-								local backpack = Player:FindFirstChild("Backpack")
-								pcall(function() ReplicatedStorage.Remotes.Ambrosia:FireServer() end)
-								pcall(function() ReplicatedStorage.Remotes.IchorChalice:FireServer() end)
-								if backpack then
-									pcall(function() backpack.CureMeadow.ServerScript.Charge:FireServer() end)
-									pcall(function() backpack.LatricReclamation.ServerScript.Charge:FireServer() end)
-								end
-							end
-							
-							-- Fire Frenzy only if HP is 40% or higher
-							if (hp / maxHp) >= 0.40 then
-								local playerGui = Player:FindFirstChild("PlayerGui")
-								local frenzyRemote = playerGui and playerGui:FindFirstChild("Parkour") and playerGui.Parkour:FindFirstChild("Script") and playerGui.Parkour.Script:FindFirstChild("FrenzyPickaxe")
-								
-								if frenzyRemote then
-									frenzyRemote:FireServer()
-								end
+						if hp < maxHp then
+							local backpack = Player:FindFirstChild("Backpack")
+							pcall(function() ReplicatedStorage.Remotes.Ambrosia:FireServer() end)
+							pcall(function() ReplicatedStorage.Remotes.IchorChalice:FireServer() end)
+							if backpack then
+								pcall(function() backpack.CureMeadow.ServerScript.Charge:FireServer() end)
+								pcall(function() backpack.LatricReclamation.ServerScript.Charge:FireServer() end)
 							end
 						end
-					end)
-					-- Wait 1 second to match the cooldown reduction tick rate
-					task.wait(1)
-				end
-			end)
+						
+						if (hp / maxHp) >= 0.40 then
+							local playerGui = Player:FindFirstChild("PlayerGui")
+							local frenzyRemote = playerGui and playerGui:FindFirstChild("Parkour") and playerGui.Parkour:FindFirstChild("Script") and playerGui.Parkour.Script:FindFirstChild("FrenzyPickaxe")
+							
+							if frenzyRemote then
+								frenzyRemote:FireServer()
+							end
+						end
+					end
+				end)
+				task.wait(1)
+			end
+		end)
 
 		while _G.AutoGrandOre do 
 			local foundOre = false
@@ -2941,7 +2933,6 @@ local function GrandOreFarm()
 				local shortestDistance = math.huge 
 
 				for i, v in pairs(oresFolder:GetChildren()) do
-					-- Removed the name check to target all ores in the folder
 					local mainPart = v:FindFirstChild("Main")
 					if mainPart and mainPart:IsA("BasePart") then
 						local hpValue = v:FindFirstChild("HP")
@@ -2998,7 +2989,6 @@ local function GrandOreFarm()
 						local stuckTimer = tick()
 
 						repeat 
-							-- Only swing if we are within 15 studs of the ore part
 							if hrp and targetPart and (hrp.Position - targetPart.Position).Magnitude <= 15 then
 								local pickaxe = getPickaxe(character)
 								if pickaxe then
@@ -3305,6 +3295,76 @@ local function isExitRoomReady(floorModel)
 	return eventCount > 0 and eventCount == completeCount
 end
 
+local function teleportToExitGate()
+	local targetGate = nil
+	for _, obj in pairs(workspace:GetDescendants()) do
+		if obj.Name == "ExitGate" then
+			targetGate = obj
+			break
+		end
+	end
+	
+	if targetGate then
+		local pos = targetGate:IsA("Model") and targetGate:GetPivot().Position or targetGate.Position
+		local hrp = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+		if hrp then
+			hrp.CFrame = CFrame.new(pos) * (hrp.CFrame - hrp.CFrame.Position)
+			Luna:Notification({Title = "Kings Ruins", Content = "Transitioning to ExitGate.", Icon = "check_circle_outline"})
+		end
+	end
+end
+
+local function startExitCheckWatcher()
+	task.spawn(function()
+		while _G.AutoDungeon do
+			local genMap = workspace:FindFirstChild("GeneratedMap")
+			local char = Player.Character
+			local root = char and char:FindFirstChild("HumanoidRootPart")
+			
+			if genMap and root then
+				local activeFloor = getActiveFloor(genMap, root)
+				if activeFloor and activeFloor.Name == "Floor3" then
+					local arena = activeFloor:FindFirstChild("KingsRuinsArena")
+					if arena then
+						local elvenAlive = false
+						local mobsFolder = workspace:FindFirstChild("Mobs")
+						if mobsFolder then
+							for _, mob in pairs(mobsFolder:GetChildren()) do
+								if mob.Name == "Elven Sorceress" and isEntityAlive(mob) then
+									elvenAlive = true
+									break
+								end
+							end
+						end
+						
+						local door = arena:FindFirstChild("Doors") and arena.Doors:FindFirstChild("DoorMain")
+						local prompt = door and door:FindFirstChildWhichIsA("ProximityPrompt", true)
+						local doorOpened = prompt and not prompt.Enabled
+						
+						if doorOpened and not elvenAlive then
+							local chestCount = countChests()
+							local mimicCount = 0
+							if mobsFolder then
+								for _, mob in pairs(mobsFolder:GetChildren()) do
+									if mob.Name == "DungeonMimicChest" and isEntityAlive(mob) then
+										mimicCount = mimicCount + 1
+									end
+								end
+							end
+							
+							if chestCount == 0 and mimicCount == 0 then
+								teleportToExitGate()
+								break
+							end
+						end
+					end
+				end
+			end
+			task.wait(1)
+		end
+	end)
+end
+
 local function StartMasterAutoDungeon()
 	task.spawn(function()
 		local state = "EVALUATE"
@@ -3314,6 +3374,8 @@ local function StartMasterAutoDungeon()
 		local currentTween = nil
 		local lastTrapClear = 0
 		local spawnTimer = 0
+
+		startExitCheckWatcher()
 
 		while _G.AutoDungeon do
 			if tick() - lastTrapClear > 1 then
@@ -3331,7 +3393,6 @@ local function StartMasterAutoDungeon()
 
 			if not genMap or not root then task.wait(0.5) continue end
 
-			-- [STATE: EVALUATION & DECISION]
 			if state == "EVALUATE" then
 				local activeFloor = getActiveFloor(genMap, root)
 				if activeFloor then
@@ -3378,7 +3439,6 @@ local function StartMasterAutoDungeon()
 					lastRoom = currentRoom
 				end
 
-			-- [STATE: FLOOR 1 & 2 EVENT ROOMS]
 			elseif state == "HANDLE_EVENT_ROOM" then
 				local comp = currentRoom:FindFirstChild("Complete")
 				if comp and comp.Value == true then
@@ -3464,7 +3524,6 @@ local function StartMasterAutoDungeon()
 					end
 				end
 
-			-- [STATE: FLOOR 1 & 2 EXIT GATES]
 			elseif state == "HANDLE_EXIT_ROOM" then
 				local gateModel = currentRoom:FindFirstChild("Gate")
 				local door = gateModel and gateModel:FindFirstChild("DoorMain")
@@ -3515,7 +3574,6 @@ local function StartMasterAutoDungeon()
 					end
 				end
 
-			-- [STATE: FLOOR 3 BOSS ARENA]
 			elseif state == "HANDLE_FLOOR_3" then
 				local doorsModel = currentRoom:FindFirstChild("Doors")
 				local door = doorsModel and doorsModel:FindFirstChild("DoorMain")
@@ -3592,7 +3650,6 @@ local function StartMasterAutoDungeon()
 					end
 				end
 
-			-- [STATE: AUTOMATIC POST-DUNGEON LOOTING]
 			elseif state == "HANDLE_LOOTING" then
 				local chestsFolder = workspace:FindFirstChild("Chests")
 				local mobsFolder = workspace:FindFirstChild("Mobs")
@@ -3603,10 +3660,8 @@ local function StartMasterAutoDungeon()
 				if chestsFolder then
 					for _, chest in pairs(chestsFolder:GetChildren()) do
 						if chest.Name == "TreasureChest" then
-							-- Find prompt recursively to handle streaming delays
 							local prompt = chest:FindFirstChildWhichIsA("ProximityPrompt", true)
 							if prompt and prompt.Enabled then
-								-- Measure distance from pivot, not "Center", in case it hasn't loaded
 								local dist = (chest:GetPivot().Position - root.Position).Magnitude
 								if dist < shortestDist then
 									shortestDist = dist
@@ -3618,10 +3673,8 @@ local function StartMasterAutoDungeon()
 				end
 
 				if targetChest then
-					-- 1. Force teleport to the model's Pivot to trigger chunk loading
 					root.CFrame = targetChest:GetPivot()
 					
-					-- 2. Snap to the exact Center part if it has loaded in
 					local center = targetChest:FindFirstChild("Center")
 					if center then
 						root.CFrame = center.CFrame
@@ -3630,7 +3683,6 @@ local function StartMasterAutoDungeon()
 					local prompt = targetChest:FindFirstChildWhichIsA("ProximityPrompt", true)
 					if prompt and prompt.Enabled then
 						prompt.HoldDuration = 0
-						-- Minimum engine wait required for the server to validate your new position
 						task.wait(0.05)
 						pcall(function() fireproximityprompt(prompt) end)
 						
@@ -3662,10 +3714,8 @@ local function StartMasterAutoDungeon()
 					local openVal = targetMimic:FindFirstChild("OpenChest")
 					
 					if openVal and openVal.Value == false then
-						-- 1. Force teleport to Pivot
 						root.CFrame = targetMimic:GetPivot()
 						
-						-- 2. Refine position to BitePlayer or IdleCollision if available
 						local bitePlayer = targetMimic:FindFirstChild("BitePlayer") or targetMimic:FindFirstChild("IdleCollision")
 						if bitePlayer then
 							root.CFrame = bitePlayer.CFrame
@@ -3674,14 +3724,13 @@ local function StartMasterAutoDungeon()
 						local prompt = targetMimic:FindFirstChildWhichIsA("ProximityPrompt", true)
 						if prompt and prompt.Enabled then
 							prompt.HoldDuration = 0
-							task.wait(0.05) -- Minimum position validation delay
+							task.wait(0.05)
 							pcall(function() fireproximityprompt(prompt) end)
 							
 							local timeout = tick()
 							while targetMimic.Parent and tick() - timeout < 2 do
 								if openVal.Value == true then break end
 								task.wait(0.1)
-								-- Keep spamming it in the loop just in case
 								pcall(function() fireproximityprompt(prompt) end)
 							end
 						end
@@ -3720,6 +3769,190 @@ local function StartMasterAutoDungeon()
 end
 
 -- ==========================================
+-- AUTO KINGS RUINS SYSTEM LOGICS
+-- ==========================================
+local function configureCameraForKingsRuins(enable)
+	if enable then
+		originalCameraType = Camera.CameraType
+		originalCameraCFrame = Camera.CFrame
+		
+		local targetTeleport = workspace:FindFirstChild("KingsRuinsTeleport")
+		if targetTeleport then
+			Camera.CameraType = Enum.CameraType.Scriptable
+			Camera.CFrame = CFrame.lookAt(targetTeleport:GetPivot().Position + Vector3.new(0, 120, 150), targetTeleport:GetPivot().Position)
+		end
+	else
+		Camera.CameraType = originalCameraType
+		Camera.CFrame = originalCameraCFrame
+	end
+end
+
+local function handleVisualRadius(enable)
+	if enable then
+		if visualRadiusSphere then visualRadiusSphere:Destroy() end
+		
+		local targetTeleport = workspace:FindFirstChild("KingsRuinsTeleport")
+		if targetTeleport then
+			visualRadiusSphere = Instance.new("Part")
+			visualRadiusSphere.Name = "Luna_RadiusVisualizer"
+			visualRadiusSphere.Shape = Enum.PartType.Ball
+			visualRadiusSphere.Size = Vector3.new(120, 120, 120) -- Represents the 60 studs radius
+			visualRadiusSphere.Color = Color3.fromRGB(0, 255, 128)
+			visualRadiusSphere.Material = Enum.Material.ForceField
+			visualRadiusSphere.Transparency = 0.6
+			visualRadiusSphere.Anchored = true
+			visualRadiusSphere.CanCollide = false
+			visualRadiusSphere.Position = targetTeleport:GetPivot().Position
+			visualRadiusSphere.Parent = workspace
+		end
+	else
+		if visualRadiusSphere then
+			visualRadiusSphere:Destroy()
+			visualRadiusSphere = nil
+		end
+	end
+end
+
+local function executeKingsRuinsEntrance()
+	local teleportModel = workspace:FindFirstChild("KingsRuinsTeleport")
+	if teleportModel then
+		local triggerPart = teleportModel:FindFirstChild("TeleportToHalloween")
+		if triggerPart and triggerPart:FindFirstChildWhichIsA("TouchTransmitter") then
+			local char = Player.Character
+			local hrp = char and char:FindFirstChild("HumanoidRootPart")
+			if hrp then
+				local originalCFrame = hrp.CFrame
+				hrp.CFrame = triggerPart.CFrame
+				task.wait(0.1)
+				firetouchinterest(hrp, triggerPart, 0)
+				task.wait(0.05)
+				firetouchinterest(hrp, triggerPart, 1)
+				task.wait(0.1)
+				hrp.CFrame = originalCFrame
+			end
+		end
+	end
+end
+
+local function executeKingsRuinsLeave()
+	local teleportModel = workspace:FindFirstChild("KingsRuinsTeleport")
+	if teleportModel then
+		local barrier = teleportModel:FindFirstChild("LeaveBarrier")
+		if barrier then
+			local hrp = Player.Character and Player.Character:FindFirstChild("HumanoidRootPart")
+			if hrp then
+				for _, part in pairs(barrier:GetChildren()) do
+					if part:IsA("BasePart") and part:FindFirstChildWhichIsA("TouchTransmitter") then
+						hrp.CFrame = part.CFrame
+						task.wait(0.1)
+						firetouchinterest(hrp, part, 0)
+						task.wait(0.05)
+						firetouchinterest(hrp, part, 1)
+						break
+					end
+				end
+			end
+		end
+	end
+end
+
+local function runKingsRuinsObserver()
+	task.spawn(function()
+		while _G.AutoKingsRuins do
+			pcall(function()
+				if isInDungeon() then
+					return
+				end
+
+				local seasonStatus, remainingTime = getSeasonTimeRemaining()
+				if seasonStatus == "Inactive" then
+					if remainingTime > 120 then
+						Luna:Notification({Title = "Auto Kings Ruins", Content = "Incorrect season. Initiating transition to another node...", Icon = "autorenew"})
+						task.wait(2)
+						doServerHop()
+						return
+					end
+				end
+
+				local teleportModel = workspace:FindFirstChild("KingsRuinsTeleport")
+				if not teleportModel then
+					task.wait(1)
+					return
+				end
+
+				local isAnyPlayerInRadius = false
+				local isAnyPlayerCloseToCenter = false
+				local centerPos = teleportModel:GetPivot().Position
+				local checkRadius = 60
+
+				for _, otherPlayer in pairs(Players:GetPlayers()) do
+					if otherPlayer ~= Player and otherPlayer.Character and otherPlayer.Character:FindFirstChild("HumanoidRootPart") then
+						local otherHRP = otherPlayer.Character.HumanoidRootPart
+						local distance = (otherHRP.Position - centerPos).Magnitude
+						if distance <= checkRadius then
+							isAnyPlayerInRadius = true
+							if distance <= 20 then
+								isAnyPlayerCloseToCenter = true
+							end
+						end
+					end
+				end
+
+				local listModel = teleportModel:FindFirstChild("PlayerList")
+				local amInLobby = listModel and listModel:FindFirstChild(Player.Name) ~= nil
+				local areOthersInLobby = false
+				if listModel then
+					for _, child in pairs(listModel:GetChildren()) do
+						if child.Name ~= Player.Name then
+							areOthersInLobby = true
+							break
+						end
+					end
+				end
+
+				local startsInText = ""
+				local startsInObj = teleportModel:FindFirstChild("RaidPlayers") 
+					and teleportModel.RaidPlayers:FindFirstChild("SurfaceGui") 
+					and teleportModel.RaidPlayers.SurfaceGui:FindFirstChild("StartsIn")
+				if startsInObj then
+					startsInText = startsInObj.Text
+				end
+
+				local parsedSeconds = tonumber(string.match(startsInText, "%d+")) or 999
+				local lobbyTimerActive = startsInText ~= ""
+
+				if amInLobby then
+					if areOthersInLobby then
+						executeKingsRuinsLeave()
+						Luna:Notification({Title = "Auto Kings Ruins", Content = "Other players inside lobby. Evacuating...", Icon = "warning"})
+						task.wait(2)
+						return
+					end
+
+					if isAnyPlayerInRadius then
+						if isAnyPlayerCloseToCenter then
+							if not lobbyTimerActive or parsedSeconds > 3 then
+								executeKingsRuinsLeave()
+								Luna:Notification({Title = "Auto Kings Ruins", Content = "Player detected near entrance. Evacuating...", Icon = "warning"})
+								task.wait(2)
+								return
+							end
+						end
+					end
+				else
+					if not isAnyPlayerInRadius then
+						if startsInText == "" then
+							executeKingsRuinsEntrance()
+						end
+					end
+				end
+			end)
+			task.wait(0.2)
+		end
+	end)
+end
+
+-- ==========================================
 -- CONSTRUCT INTERFACE WORKFLOW
 -- ==========================================
 local Window = Luna:CreateWindow({
@@ -3733,26 +3966,26 @@ local Window = Luna:CreateWindow({
 })
 
 local gateDropdown, spawnDropdown, markerDropdown
-local gateRefs, spawnRefs, markerRefs -- Declare these here so the refresh function can actually update them!
+local gateRefs, spawnRefs, markerRefs 
 
 local function RefreshGatesAndSpawns()
 	pcall(function()
 		if gateDropdown then
 			local rawList, newRefs = getGates()
-			gateRefs = newRefs -- This saves the actual object locations!
+			gateRefs = newRefs 
 			gateDropdown:Set({Options = rawList})
 		end
 	end)
 	pcall(function()
 		if spawnDropdown then
 			local rawList, newRefs = getSpawns()
-			spawnRefs = newRefs -- This saves the actual object locations!
+			spawnRefs = newRefs 
 			spawnDropdown:Set({Options = rawList})
 		end
 	end)
 end
 
-local currentMarkerList = {"None"} -- Added this to track the list globally
+local currentMarkerList = {"None"} 
 
 local function refreshMarkersList()
 	local projFolder = workspace:FindFirstChild("Projectiles")
@@ -3776,19 +4009,16 @@ local function refreshMarkersList()
 	if #newList == 0 then 
 		table.insert(newList, "None") 
 	else
-		-- Sort alphabetically so Marker1 comes before Marker2
 		table.sort(newList)
 	end
 	
 	currentMarkerList = newList
 	
-	-- Auto-select the lowest marker if current selection is invalid or "None"
 	if not table.find(newList, _G.SelectedMarker) or _G.SelectedMarker == "None" then
 		_G.SelectedMarker = newList[1]
 	end
 
 	if markerDropdown then
-		-- Update the options AND force the UI to display the newly selected marker
 		markerDropdown:Set({Options = newList, CurrentOption = {_G.SelectedMarker}})
 	end
 end
@@ -3864,15 +4094,15 @@ local secTweenGates = tabMain:CreateSection("Secure Gates Teleporter Navigation"
 secTweenGates:CreateToggle({
 	Name = "Enable Safe Tween Checks",
 	Description = "Requires activation prior to using Overworld Gate/Spawn teleports.",
-	CurrentValue = true, -- Changed to true by default
+	CurrentValue = _G.EnableTweeningSafety,
 	Callback = function(val)
 		_G.EnableTweeningSafety = val
+		saveConfig()
 	end
 })
-_G.EnableTweeningSafety = true -- Ensures the variable is set immediately
 
 local rawGateList
-rawGateList, gateRefs = getGates() -- Removed "local" from gateRefs
+rawGateList, gateRefs = getGates() 
 local selectedGate = rawGateList[1]
 
 gateDropdown = secTweenGates:CreateDropdown({
@@ -3910,7 +4140,7 @@ secTweenGates:CreateButton({
 					icon.Adornee = gatePart 
 					icon.AlwaysOnTop = true
 					icon.ExtentsOffset = Vector3.new(0, 5, 0) 
-					icon.Size = UDim2.new(0, 250, 0, 50) -- Made slightly wider for the timer
+					icon.Size = UDim2.new(0, 250, 0, 50) 
 					icon.Parent = gatePart
 
 					local espText = Instance.new("TextLabel")
@@ -3918,12 +4148,11 @@ secTweenGates:CreateButton({
 					espText.BackgroundTransparency = 1.000
 					espText.Size = UDim2.new(1, 0, 1, 0)
 					espText.Font = Enum.Font.SciFi
-					espText.Text = selectedGate -- Initial text
+					espText.Text = selectedGate 
 					espText.TextColor3 = espColor
 					espText.TextSize = 18.000
 					espText.TextStrokeTransparency = 0 
 					
-					-- [NEW] Fetch base info to reconstruct the name cleanly
 					local levelObj = targetGate:FindFirstChild("Level", true)
 					local rankObj = targetGate:FindFirstChild("Rank", true)
 					local timeSpawnedObj = targetGate:FindFirstChild("TimeSpawned", true)
@@ -3933,9 +4162,7 @@ secTweenGates:CreateButton({
 					local baseName = string.format("%s [Lvl %s | Rank %s]", targetGate.Name, lvl, rnk)
 					local spawnTime = timeSpawnedObj and tonumber(timeSpawnedObj.Value) or nil
 
-					-- [NEW] Live ticking loop
 					task.spawn(function()
-						-- Loop runs only while the gate exists in the workspace
 						while gatePart and gatePart:IsDescendantOf(workspace) do
 							local timerStr = " | Expired"
 							if spawnTime then
@@ -3950,7 +4177,7 @@ secTweenGates:CreateButton({
 							if espText then
 								espText.Text = baseName .. timerStr
 							else
-								break -- Failsafe if the text label gets deleted
+								break 
 							end
 							
 							task.wait(1)
@@ -3981,7 +4208,7 @@ secTweenGates:CreateButton({
 })
 
 local rawSpawnList
-rawSpawnList, spawnRefs = getSpawns() -- Removed "local" from spawnRefs
+rawSpawnList, spawnRefs = getSpawns() 
 local selectedSpawn = rawSpawnList[1]
 
 spawnDropdown = secTweenGates:CreateDropdown({
@@ -4032,6 +4259,21 @@ local tabRuins = Window:CreateTab({
 })
 
 local secRuinsCore = tabRuins:CreateSection("Raid Controller")
+
+secRuinsCore:CreateToggle({
+	Name = "Auto Kings Ruins",
+	Description = "Check for Fall/Spring season, scan radius, manage entrances/exits, and auto-run Master Dungeon on start.",
+	CurrentValue = _G.AutoKingsRuins,
+	Callback = function(val)
+		_G.AutoKingsRuins = val
+		saveConfig()
+		configureCameraForKingsRuins(val)
+		handleVisualRadius(val)
+		if val then
+			runKingsRuinsObserver()
+		end
+	end
+})
 
 secRuinsCore:CreateToggle({
 	Name = "Master Auto Dungeon",
@@ -4167,7 +4409,6 @@ secRuinsCore:CreateButton({
         local targetPos = targetModel:GetPivot().Position
         local now = tick()
         
-        -- Run safety scan with an expanded 250-stud radius
         local playerNear = isPlayerNearDepartureOrArrival(targetPos, 250)
         
         if playerNear then
@@ -4186,7 +4427,6 @@ secRuinsCore:CreateButton({
         bypassWarning = false
         
         task.spawn(function()
-            -- Temporary collision bypass to prevent physics snags during vertical movement
             local noclipConn = RunService.Stepped:Connect(function()
                 if char then
                     for _, p in pairs(char:GetDescendants()) do
@@ -4200,25 +4440,22 @@ secRuinsCore:CreateButton({
             local startPos = hrp.Position
             local peakY = math.max(startPos.Y, targetPos.Y) + 400
             
-            -- Stage 1: Tween straight up to peak altitude
             local upCFrame = CFrame.new(startPos.X, peakY, startPos.Z)
             local distUp = math.abs(peakY - startPos.Y)
-            local timeUp = distUp / 200 -- speed: 200 studs/sec
+            local timeUp = distUp / 200 
             
             local upTween = TweenService:Create(hrp, TweenInfo.new(timeUp, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {CFrame = upCFrame})
             upTween:Play()
             upTween.Completed:Wait()
             
-            -- Stage 2: Tween horizontally across the sky
             local targetHighCFrame = CFrame.new(targetPos.X, peakY, targetPos.Z)
             local distHorizontal = (Vector3.new(targetPos.X, 0, targetPos.Z) - Vector3.new(startPos.X, 0, startPos.Z)).Magnitude
-            local timeHorizontal = distHorizontal / 300 -- speed: 300 studs/sec
+            local timeHorizontal = distHorizontal / 300 
             
             local horizTween = TweenService:Create(hrp, TweenInfo.new(timeHorizontal, Enum.EasingStyle.Linear), {CFrame = targetHighCFrame})
             horizTween:Play()
             horizTween.Completed:Wait()
             
-            -- Clean up and let the engine drop you naturally
             noclipConn:Disconnect()
             stopMomentum(hrp)
             
@@ -4235,25 +4472,7 @@ secRuinsCore:CreateButton({
 	Name = "Teleport to ExitGate",
 	Description = "Finds and teleports to the nearest ExitGate.",
 	Callback = function()
-		local targetGate = nil
-		for _, obj in pairs(workspace:GetDescendants()) do
-			if obj.Name == "ExitGate" then
-				targetGate = obj
-				break
-			end
-		end
-		
-		if targetGate then
-			local pos = targetGate:IsA("Model") and targetGate:GetPivot().Position or targetGate.Position
-			local hrp = game.Players.LocalPlayer.Character.HumanoidRootPart
-
-			-- Preserves current rotation, only changes the position
-			hrp.CFrame = CFrame.new(pos) * (hrp.CFrame - hrp.CFrame.Position)
-
-			Luna:Notification({Title = "Kings Ruins", Content = "Teleporting to ExitGate...", Icon = "check_circle_outline"})
-		else
-			Luna:Notification({Title = "Kings Ruins", Content = "No ExitGate found in workspace.", Icon = "warning"})
-		end
+		teleportToExitGate()
 	end
 })
 
@@ -4284,13 +4503,11 @@ local initialChests = 0
 task.spawn(function()
     while task.wait(0.5) do
         pcall(function()
-            -- Always count ores
             local currentOres = countGrandOres()
             if currentOres > initialOres then initialOres = currentOres end
             _G.GrandOresLeft = currentOres
             lblOres:Set("Ores: " .. tostring(_G.GrandOresLeft) .. " / " .. tostring(initialOres))
 
-            -- Always count chests
             local currentChests = countChests()
             if currentChests > initialChests then initialChests = currentChests end
             _G.ChestsLeft = currentChests
@@ -4312,7 +4529,7 @@ markerDropdown = secMarkers:CreateDropdown({
 })
 
 secMarkers:CreateButton({
-	Name = "Teleport To Selected",
+	Name = "Tween To Selected",
 	Description = "Tween to active marker coordinates smoothly.",
 	Callback = function()
 		if _G.SelectedMarker == "None" or _G.SelectedMarker == "" or not _G.SelectedMarker then return end
@@ -4322,10 +4539,8 @@ secMarkers:CreateButton({
 			if targetProj then
 				local markerPart = targetProj:FindFirstChild("Marker")
 				if markerPart and markerPart:IsA("BasePart") then
-					-- Tween to the marker
 					SmoothTween(markerPart.CFrame * CFrame.new(0, 3, 0), 150, function() return true end)
 					
-					-- Auto-select the next marker in the list after teleporting!
 					local currentIndex = table.find(currentMarkerList, _G.SelectedMarker)
 					if currentIndex and currentIndex < #currentMarkerList then
 						local nextMarker = currentMarkerList[currentIndex + 1]
@@ -4442,7 +4657,7 @@ secCombatGates:CreateToggle({
 -- ==========================================
 local tabSea = Window:CreateTab({
 	Name = "Sea",
-	Icon = "anchor", -- Utilizing the built-in anchor icon
+	Icon = "anchor", 
 	ImageSource = "Material",
 	ShowTitle = true
 })
@@ -4570,7 +4785,6 @@ secSeaFarms:CreateToggle({
 		local character = Player.Character
 		
 		if val then
-			-- Save the initial position when toggled ON
 			if character then
 				savedSeaPosition = character:GetPivot()
 			end
@@ -4592,7 +4806,6 @@ secSeaFarms:CreateToggle({
 				end
 			end)
 		else
-			-- Restore the saved position when toggled OFF
 			if savedSeaPosition and character then
 				character:PivotTo(savedSeaPosition)
 				savedSeaPosition = nil
@@ -4667,7 +4880,7 @@ secMiscCore:CreateDropdown({
 	Name = "Set FPS Cap",
 	Description = "Lock the frame render limits.",
 	Options = {"None", "15", "25", "35", "45"},
-	CurrentOption = {"15"}, -- Changed default to 15
+	CurrentOption = {"15"}, 
 	Callback = function(val)
 		if val == "None" then return end
 		if setfpscap then
@@ -4676,7 +4889,7 @@ secMiscCore:CreateDropdown({
 		end
 	end
 })
-if setfpscap then setfpscap(25) end -- Applies the 15 FPS cap on load
+if setfpscap then setfpscap(15) end 
 
 secMiscCore:CreateButton({
 	Name = "Execute Infinite Yield",
@@ -4691,7 +4904,6 @@ secDestruct:CreateButton({
 	Name = "Unload Framework UI",
 	Description = "Dismantle script processes safely.",
 	Callback = function()
-		-- [NEW]: Kill the teleport connection on full self-destruct
 		if _G.TeleportConnection then
 			_G.TeleportConnection:Disconnect()
 			_G.TeleportConnection = nil
@@ -4708,6 +4920,7 @@ secDestruct:CreateButton({
 		_G.SlingshotElven = false
 		_G.SlingshotStatue = false
 		_G.SlingshotMimic = false
+		_G.AutoKingsRuins = false
 
 		local cam = workspace.CurrentCamera
 		if cam then cam.CameraType = Enum.CameraType.Custom end
@@ -4715,6 +4928,8 @@ secDestruct:CreateButton({
 		resetWalkSpeed()
 		CancelSmoothTween()
 		toggleNoclip(false)
+		configureCameraForKingsRuins(false)
+		handleVisualRadius(false)
 
 		if clickConnectionBegan then clickConnectionBegan:Disconnect() end
 		if clickConnectionEnded then clickConnectionEnded:Disconnect() end
@@ -4733,12 +4948,10 @@ secDestruct:CreateButton({
 -- ==========================================
 -- TELEPORT PERSISTENT EXECUTOR (Auto-Run)
 -- ==========================================
-local Players = game:GetService("Players")
 local queue_on_teleport = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or queue_to_teleport
 
 local TeleportCheck = false
 
--- Clean up any leftover connection from previous script runs
 if _G.TeleportConnection then
 	_G.TeleportConnection:Disconnect()
 	_G.TeleportConnection = nil
@@ -4753,7 +4966,7 @@ if queue_on_teleport then
 				if not game:IsLoaded() then
 					game.Loaded:Wait()
 				end
-				task.wait(5) -- Your requested 5-second delay
+				task.wait(5)
 				
 				pcall(function()
 					loadstring(game:HttpGet("https://raw.githubusercontent.com/NotShanks/test/refs/heads/master/uHub.txt"))()
@@ -4762,3 +4975,21 @@ if queue_on_teleport then
 		end
 	end)
 end
+
+-- Post-Load Initialization Sequences
+task.spawn(function()
+	task.wait(1.5)
+	if isInDungeon() then
+		if _G.AutoKingsRuins then
+			_G.AutoDungeon = true
+			Luna:Notification({Title = "Auto Dungeon", Content = "Entering Kings Ruins. Initiating Dungeon automation...", Icon = "uautodungeon"})
+			StartMasterAutoDungeon()
+		end
+	else
+		if _G.AutoKingsRuins then
+			configureCameraForKingsRuins(true)
+			handleVisualRadius(true)
+			runKingsRuinsObserver()
+		end
+	end
+end)
