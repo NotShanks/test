@@ -1,3 +1,4 @@
+```lua
 --[[
 	Luna Interface Suite & Utility Hub Combined Execution Script
 	Optimized for Advanced Combat Farms and Master Dungeon Automation
@@ -138,7 +139,8 @@ local function saveConfig()
 			AutoKingsRuins = _G.AutoKingsRuins,
 			EnableTweeningSafety = _G.EnableTweeningSafety,
 			KingsRuinsCompletedCount = _G.KingsRuinsCompletedCount,
-			DiscordWebhookURL = _G.DiscordWebhookURL
+			DiscordWebhookURL = _G.DiscordWebhookURL,
+			DiscordMessageId = _G.DiscordMessageId -- Anchors webhook dashboard updates securely between repeated server teleports!
 		}
 		pcall(function()
 			writefile(configFileName, HttpService:JSONEncode(data))
@@ -157,6 +159,7 @@ local function loadConfig()
 			_G.EnableTweeningSafety = data.EnableTweeningSafety or false
 			_G.KingsRuinsCompletedCount = data.KingsRuinsCompletedCount or 0
 			_G.DiscordWebhookURL = data.DiscordWebhookURL or ""
+			_G.DiscordMessageId = data.DiscordMessageId or nil
 		end
 	end
 end
@@ -399,7 +402,6 @@ pcall(function()
 	end
 end)
 
-_G.DiscordMessageId = nil -- Kept strictly in-memory to prevent stale 404 blocks
 local isSendingWebhook = false
 
 local function sendWebhookNotification(statusState, statusMessage)
@@ -409,7 +411,7 @@ local function sendWebhookNotification(statusState, statusMessage)
 		statusState = "ACTIVE"
 	end
 
-	-- Exact request resolution order used in aa.txt
+	-- Exact request resolution order used dynamically per exploit level
 	local httprequest = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
 	if not httprequest or not _G.DiscordWebhookURL or _G.DiscordWebhookURL == "" then return end
 	if isSendingWebhook then return end
@@ -428,7 +430,7 @@ local function sendWebhookNotification(statusState, statusMessage)
 			end
 
 			local goldGained = math.max(0, currentGold - initialGold)
-			local elapsedSeconds = os.time() - startupTime
+			local elapsedSeconds = math.max(0, os.time() - startupTime)
 			local elapsedMinutes = elapsedSeconds / 60
 			local goldPerMin = elapsedMinutes > 0 and math.floor(goldGained / elapsedMinutes) or 0
 
@@ -480,8 +482,13 @@ local function sendWebhookNotification(statusState, statusMessage)
 			local jsonPayload = HttpService:JSONEncode(payload)
 			local cleanUrl = string.gsub(_G.DiscordWebhookURL, "%s+", "") -- Sanitize whitespaces
 
+            local reqHeaders = { 
+                ["Content-Type"] = "application/json",
+                ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36" 
+            }
+
 			if not _G.DiscordMessageId then
-				-- First execution: POST to generate the message and capture its ID
+				-- First execution (Server Init without memory config): POST to generate the message entirely
 				local targetUrl = cleanUrl
 				if not string.find(cleanUrl, "%?") then
 					targetUrl = cleanUrl .. "?wait=true"
@@ -492,26 +499,37 @@ local function sendWebhookNotification(statusState, statusMessage)
 				local res = httprequest({ 
 					Url = targetUrl, 
 					Method = "POST", 
-					Headers = { ["Content-Type"] = "application/json" }, 
+					Headers = reqHeaders, 
 					Body = jsonPayload 
 				})
 
 				if res and (res.Body or res.body) then
+					local bodyTxt = res.Body or res.body
 					local successDec, dataDec = pcall(function() 
-						return HttpService:JSONDecode(res.Body or res.body) 
+						return HttpService:JSONDecode(bodyTxt) 
 					end)
 					if successDec and dataDec and dataDec.id then 
 						_G.DiscordMessageId = dataDec.id 
+						saveConfig() -- Rapid Cache Syncing keeps discord Ratelimits isolated between specific hops seamlessly!
 					end
 				end
 			else
-				-- Subsequent executions: PATCH existing dashboard card
-				httprequest({ 
+				-- Subsequent Executions / Teleport Carryovers: PATCH existing dashboard card dynamically
+				local patchRes = httprequest({ 
 					Url = cleanUrl .. "/messages/" .. _G.DiscordMessageId, 
 					Method = "PATCH", 
-					Headers = { ["Content-Type"] = "application/json" }, 
+					Headers = reqHeaders, 
 					Body = jsonPayload 
 				})
+				
+				if patchRes then
+					local responseCode = patchRes.StatusCode or patchRes.status_code or patchRes.code
+					-- Force completely recreate a new tracker message if a discord mod/user manually deletes the original one to clear their logs
+					if responseCode and (responseCode == 404 or responseCode == 400 or responseCode == 401) then
+						_G.DiscordMessageId = nil
+						saveConfig()
+					end
+				end
 			end
 		end)
 		
