@@ -25,6 +25,19 @@ local function isInDungeon()
 	return workspace:FindFirstChild("GeneratedMap") ~= nil
 end
 
+local function isInsideKingsRuinsDungeon()
+	if not isInDungeon() then return false end
+	
+	local effects = workspace:FindFirstChild("Effects")
+	local gate = effects and effects:FindFirstChild("Gate")
+	local map = gate and gate:FindFirstChild("Map")
+	
+	if map and map:IsA("StringValue") and map.Value == "KingsRuins" then
+		return true
+	end
+	return false
+end
+
 -- ==========================================
 -- GAME EXPLOIT LOGICS & GLOBAL CONFIG
 -- ==========================================
@@ -2837,13 +2850,16 @@ end
 task.spawn(function()
 	while task.wait(3) do
 		if (_G.AutoKingsRuins or _G.AutoDungeon) then
-			if #Players:GetPlayers() > 1 then
-				Luna:Notification({
-					Title = "Failsafe Triggered",
-					Content = "Another player joined the server. Teleporting to safety...",
-					Icon = "warning"
-				})
-				executeFailsafeTeleport()
+			-- Triggers only if inside a dungeon specifically marked as KingsRuins
+			if isInsideKingsRuinsDungeon() then
+				if #Players:GetPlayers() > 1 then
+					Luna:Notification({
+						Title = "Failsafe Triggered",
+						Content = "Another player joined your dungeon. Teleporting to safety...",
+						Icon = "warning"
+					})
+					executeFailsafeTeleport()
+				end
 			end
 		end
 	end
