@@ -19,6 +19,13 @@ local isStudio = RunService:IsStudio()
 local website = "github.com/Nebula-Softworks"
 
 -- ==========================================
+-- EARLY SCOPE DEFINITIONS & HELPERS
+-- ==========================================
+local function isInDungeon()
+	return workspace:FindFirstChild("GeneratedMap") ~= nil
+end
+
+-- ==========================================
 -- GAME EXPLOIT LOGICS & GLOBAL CONFIG
 -- ==========================================
 _G.GrandOresLeft = 0
@@ -45,6 +52,7 @@ _G.AutoKingsRuins = false
 local originalCameraType = Camera.CameraType
 local originalCameraCFrame = Camera.CFrame
 local visualRadiusSphere = nil
+local statusUILabel = nil -- Will reference the UI status label
 
 -- Sea World
 _G.AutoAmbrosia = false
@@ -299,6 +307,36 @@ local function getSeasonTimeRemaining()
 	else
 		return "Inactive", realSecondsLeft
 	end
+end
+
+local function updateUIRunsStatus(text)
+	if statusUILabel then
+		statusUILabel:Set("Status: " .. tostring(text))
+	end
+end
+
+local function doServerHop()
+	local TeleportService = game:GetService("TeleportService")
+	local PlaceId = game.PlaceId
+	local JobId = game.JobId
+	
+	local success, result = pcall(function()
+		local servers = {}
+		local req = game:HttpGet("https://games.roblox.com/v1/games/" .. PlaceId .. "/servers/Public?sortOrder=Desc&limit=100&excludeFullGames=true")
+		local body = HttpService:JSONDecode(req)
+
+		if body and body.data then
+			for i, v in next, body.data do
+				if type(v) == "table" and tonumber(v.playing) and tonumber(v.maxPlayers) and v.playing < v.maxPlayers and v.id ~= JobId then
+					table.insert(servers, v.id)
+				end
+			end
+		end
+
+		if #servers > 0 then
+			TeleportService:TeleportToPlaceInstance(PlaceId, servers[math.random(1, #servers)], Player)
+		end
+	end)
 end
 
 _G.CancelTween = false
@@ -3779,7 +3817,8 @@ local function configureCameraForKingsRuins(enable)
 		local targetTeleport = workspace:FindFirstChild("KingsRuinsTeleport")
 		if targetTeleport then
 			Camera.CameraType = Enum.CameraType.Scriptable
-			Camera.CFrame = CFrame.lookAt(targetTeleport:GetPivot().Position + Vector3.new(0, 120, 150), targetTeleport:GetPivot().Position)
+			-- Negated Z axis to -150 to pivot the perspective 180 degrees
+			Camera.CFrame = CFrame.lookAt(targetTeleport:GetPivot().Position + Vector3.new(0, 120, -150), targetTeleport:GetPivot().Position)
 		end
 	else
 		Camera.CameraType = originalCameraType
@@ -3796,7 +3835,7 @@ local function handleVisualRadius(enable)
 			visualRadiusSphere = Instance.new("Part")
 			visualRadiusSphere.Name = "Luna_RadiusVisualizer"
 			visualRadiusSphere.Shape = Enum.PartType.Ball
-			visualRadiusSphere.Size = Vector3.new(120, 120, 120) -- Represents the 60 studs radius
+			visualRadiusSphere.Size = Vector3.new(120, 120, 120) 
 			visualRadiusSphere.Color = Color3.fromRGB(0, 255, 128)
 			visualRadiusSphere.Material = Enum.Material.ForceField
 			visualRadiusSphere.Transparency = 0.6
@@ -3856,26 +3895,59 @@ local function executeKingsRuinsLeave()
 	end
 end
 
+-- Robust name-matching parser for child hierarchy inside PlayerList
+local function getLobbyPlayers()
+	local lobbyPlayers = {}
+	local listModel = workspace:FindFirstChild("KingsRuinsTeleport") and workspace.KingsRuinsTeleport:FindFirstChild("PlayerList")
+	if listModel then
+		for _, child in pairs(listModel:GetChildren()) do
+			local nameValObj = child:FindFirstChild("Name")
+			local playerName = ""
+			if nameValObj then
+				if nameValObj:IsA("StringValue") or nameValObj:IsA("TextValue") then
+					playerName = nameValObj.Value
+				else
+					playerName = nameValObj.Name
+				end
+			else
+				playerName = child.Name
+			end
+			if playerName ~= "" and Players:FindFirstChild(playerName) then
+				table.insert(lobbyPlayers, playerName)
+			end
+		end
+	end
+	return lobbyPlayers
+end
+
 local function runKingsRuinsObserver()
 	task.spawn(function()
 		while _G.AutoKingsRuins do
 			pcall(function()
 				if isInDungeon() then
+					updateUIRunsStatus("Dungeon active")
+					task.wait(2)
 					return
 				end
 
 				local seasonStatus, remainingTime = getSeasonTimeRemaining()
 				if seasonStatus == "Inactive" then
 					if remainingTime > 120 then
-						Luna:Notification({Title = "Auto Kings Ruins", Content = "Incorrect season. Initiating transition to another node...", Icon = "autorenew"})
+						updateUIRunsStatus("Wrong season | Server Hopping")
+						Luna:Notification({Title = "Auto Kings Ruins", Content = "Incorrect season. Hopping to another node...", Icon = "autorenew"})
 						task.wait(2)
 						doServerHop()
+						return
+					else
+						updateUIRunsStatus("Season starts in " .. math.floor(remainingTime) .. "s")
+						task.wait(1)
 						return
 					end
 				end
 
 				local teleportModel = workspace:FindFirstChild("KingsRuinsTeleport")
 				if not teleportModel then
+					updateUIRunsStatus("Teleporter model missing")
 					task.wait(1)
 					return
 				end
@@ -3898,15 +3970,13 @@ local function runKingsRuinsObserver()
 					end
 				end
 
-				local listModel = teleportModel:FindFirstChild("PlayerList")
-				local amInLobby = listModel and listModel:FindFirstChild(Player.Name) ~= nil
+				local lobbyPlayers = getLobbyPlayers()
+				local amInLobby = table.find(lobbyPlayers, Player.Name) ~= nil
 				local areOthersInLobby = false
-				if listModel then
-					for _, child in pairs(listModel:GetChildren()) do
-						if child.Name ~= Player.Name then
-							areOthersInLobby = true
-							break
-						end
+				for _, name in ipairs(lobbyPlayers) do
+					if name ~= Player.Name then
+						areOthersInLobby = true
+						break
 					end
 				end
 
@@ -3923,6 +3993,7 @@ local function runKingsRuinsObserver()
 
 				if amInLobby then
 					if areOthersInLobby then
+						updateUIRunsStatus("Others inside lobby | Evacuating")
 						executeKingsRuinsLeave()
 						Luna:Notification({Title = "Auto Kings Ruins", Content = "Other players inside lobby. Evacuating...", Icon = "warning"})
 						task.wait(2)
@@ -3932,6 +4003,7 @@ local function runKingsRuinsObserver()
 					if isAnyPlayerInRadius then
 						if isAnyPlayerCloseToCenter then
 							if not lobbyTimerActive or parsedSeconds > 3 then
+								updateUIRunsStatus("Player near teleporter | Evacuating")
 								executeKingsRuinsLeave()
 								Luna:Notification({Title = "Auto Kings Ruins", Content = "Player detected near entrance. Evacuating...", Icon = "warning"})
 								task.wait(2)
@@ -3939,9 +4011,16 @@ local function runKingsRuinsObserver()
 							end
 						end
 					end
+					
+					updateUIRunsStatus("Waiting for start (" .. startsInText .. ")")
 				else
-					if not isAnyPlayerInRadius then
-						if startsInText == "" then
+					if isAnyPlayerInRadius then
+						updateUIRunsStatus("Area blocked by players")
+					else
+						if startsInText == "" or startsInText == "TELEPORTING PARTY" then
+							updateUIRunsStatus("Waiting for portal status to clear")
+						else
+							updateUIRunsStatus("Entering Lobby")
 							executeKingsRuinsEntrance()
 						end
 					end
@@ -4260,9 +4339,14 @@ local tabRuins = Window:CreateTab({
 
 local secRuinsCore = tabRuins:CreateSection("Raid Controller")
 
+statusUILabel = secRuinsCore:CreateLabel({
+	Text = "Status: Idle",
+	Style = 2
+})
+
 secRuinsCore:CreateToggle({
 	Name = "Auto Kings Ruins",
-	Description = "Check for Fall/Spring season, scan radius, manage entrances/exits, and auto-run Master Dungeon on start.",
+	Description = "Check Fall/Spring season, scan radius, manage entrance/exit queue logic, and auto-activate Master Dungeon.",
 	CurrentValue = _G.AutoKingsRuins,
 	Callback = function(val)
 		_G.AutoKingsRuins = val
@@ -4271,6 +4355,8 @@ secRuinsCore:CreateToggle({
 		handleVisualRadius(val)
 		if val then
 			runKingsRuinsObserver()
+		else
+			updateUIRunsStatus("Idle")
 		end
 	end
 })
