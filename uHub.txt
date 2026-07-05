@@ -92,6 +92,19 @@ local function ensureConfigFolder()
 	end
 end
 
+local function isPlayerAuthorized(playerName)
+	if playerName == Player.Name then return true end
+	
+	-- Automatically whitelists peers who have active configs written to the shared directory
+	if isfile then
+		local partnerConfigPath = folderName .. "/Config_" .. playerName .. ".json"
+		if isfile(partnerConfigPath) then
+			return true
+		end
+	end
+	return false
+end
+
 local function saveConfig()
 	if writefile then
 		ensureConfigFolder()
@@ -99,8 +112,7 @@ local function saveConfig()
 			AutoKingsRuins = _G.AutoKingsRuins,
 			EnableTweeningSafety = _G.EnableTweeningSafety,
 			KingsRuinsCompletedCount = _G.KingsRuinsCompletedCount,
-			DiscordWebhookURL = _G.DiscordWebhookURL,
-			DiscordMessageId = _G.DiscordMessageId
+			DiscordWebhookURL = _G.DiscordWebhookURL
 		}
 		pcall(function()
 			writefile(configFileName, HttpService:JSONEncode(data))
@@ -119,7 +131,6 @@ local function loadConfig()
 			_G.EnableTweeningSafety = data.EnableTweeningSafety or false
 			_G.KingsRuinsCompletedCount = data.KingsRuinsCompletedCount or 0
 			_G.DiscordWebhookURL = data.DiscordWebhookURL or ""
-			_G.DiscordMessageId = data.DiscordMessageId or ""
 		end
 	end
 end
@@ -361,7 +372,7 @@ pcall(function()
 	end
 end)
 
-_G.DiscordMessageId = _G.DiscordMessageId or ""
+_G.DiscordMessageId = nil -- Kept strictly in-memory to prevent stale 404 blocks
 local isSendingWebhook = false
 
 local function sendWebhookNotification(statusState, statusMessage)
@@ -371,7 +382,9 @@ local function sendWebhookNotification(statusState, statusMessage)
 		statusState = "ACTIVE"
 	end
 
-	if not _G.DiscordWebhookURL or _G.DiscordWebhookURL == "" then return end
+	-- Exact request resolution order used in aa.txt
+	local httprequest = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
+	if not httprequest or not _G.DiscordWebhookURL or _G.DiscordWebhookURL == "" then return end
 	if isSendingWebhook then return end
 	isSendingWebhook = true
 	
@@ -412,9 +425,10 @@ local function sendWebhookNotification(statusState, statusMessage)
 
 			local shortJobId = game.JobId ~= "" and string.sub(game.JobId, 1, 8) or "Solo/Lobby"
 
-			local data = {
-				["content"] = "", -- Provided to prevent payload rejections on third-party proxy platforms
-				["embeds"] = {{
+			local payload = {
+				username = Player.Name .. " Analytics",
+				avatar_url = "https://i.imgur.com/wSTFk6E.png",
+				embeds = {{
 					["title"] = "Utility Hub - Real-Time Dashboard",
 					["color"] = embedColor,
 					["description"] = "**Current Activity:**\n`" .. statusMessage .. "`",
@@ -432,60 +446,52 @@ local function sendWebhookNotification(statusState, statusMessage)
 						{["name"] = "📦 Chests Left", ["value"] = "**" .. tostring(_G.ChestsLeft) .. "**", ["inline"] = true},
 						{["name"] = "💎 Session Yield", ["value"] = "**+" .. tostring(goldGained) .. " Gold**", ["inline"] = true}
 					},
-					["footer"] = {["text"] = "Utility Hub Client Automated Logs"},
-					["timestamp"] = os.date("!Y-%m-%dT%H:%M:%SZ")
+					["footer"] = { ["text"] = "System Time: " .. os.date("%X") }
 				}}
 			}
 			
-			local headers = {["Content-Type"] = "application/json"}
-			local payload = HttpService:JSONEncode(data)
-			
-			-- Order resolved specifically to bypass mock environments on non-standard executors
-			local req = request or http_request or (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request)
-			if req then
-				local hasMessageId = (_G.DiscordMessageId and _G.DiscordMessageId ~= "")
-				local cleanUrl = string.gsub(_G.DiscordWebhookURL, "%s+", "") -- Sanitize whitespaces
-				local targetUrl = cleanUrl
-				local httpMethod = "POST"
+			local jsonPayload = HttpService:JSONEncode(payload)
+			local cleanUrl = string.gsub(_G.DiscordWebhookURL, "%s+", "") -- Sanitize whitespaces
 
-				if hasMessageId then
-					targetUrl = cleanUrl .. "/messages/" .. _G.DiscordMessageId
-					httpMethod = "PATCH"
+			if not _G.DiscordMessageId then
+				-- First execution: POST to generate the message and capture its ID
+				local targetUrl = cleanUrl
+				if not string.find(cleanUrl, "%?") then
+					targetUrl = cleanUrl .. "?wait=true"
 				else
-					if not string.find(cleanUrl, "%?") then
-						targetUrl = cleanUrl .. "?wait=true"
-					else
-						targetUrl = cleanUrl .. "&wait=true"
-					end
+					targetUrl = cleanUrl .. "&wait=true"
 				end
 
-				local res = req({
-					Url = targetUrl,
-					Method = httpMethod,
-					Headers = headers,
-					Body = payload
+				local res = httprequest({ 
+					Url = targetUrl, 
+					Method = "POST", 
+					Headers = { ["Content-Type"] = "application/json" }, 
+					Body = jsonPayload 
 				})
 
-				-- Check both case-sensitive variations of response payloads
-				if not hasMessageId and res then
-					local bodyText = res.Body or res.body
-					if bodyText then
-						local decoded = HttpService:JSONDecode(bodyText)
-						if decoded and decoded.id then
-							_G.DiscordMessageId = decoded.id
-							saveConfig()
-						end
+				if res and (res.Body or res.body) then
+					local successDec, dataDec = pcall(function() 
+						return HttpService:JSONDecode(res.Body or res.body) 
+					end)
+					if successDec and dataDec and dataDec.id then 
+						_G.DiscordMessageId = dataDec.id 
 					end
 				end
 			else
-				warn("Utility Hub Webhook: No valid request function found on this executor.")
+				-- Subsequent executions: PATCH existing dashboard card
+				httprequest({ 
+					Url = cleanUrl .. "/messages/" .. _G.DiscordMessageId, 
+					Method = "PATCH", 
+					Headers = { ["Content-Type"] = "application/json" }, 
+					Body = jsonPayload 
+				})
 			end
 		end)
 		
 		if not success then
 			warn("Utility Hub Webhook dispatch encountered an error: " .. tostring(err))
 		end
-		isSendingWebhook = false -- Safe unlock guaranteed
+		isSendingWebhook = false -- Lock released safely
 	end)
 end
 
@@ -2965,7 +2971,15 @@ task.spawn(function()
 		if (_G.AutoKingsRuins or _G.AutoDungeon) then
 			-- Triggers only if inside a dungeon specifically marked as KingsRuins
 			if isInsideKingsRuinsDungeon() then
-				if #Players:GetPlayers() > 1 then
+				local unauthorizedPlayerFound = false
+				for _, player in ipairs(Players:GetPlayers()) do
+					if not isPlayerAuthorized(player.Name) then
+						unauthorizedPlayerFound = true
+						break
+					end
+				end
+				
+				if unauthorizedPlayerFound then
 					Luna:Notification({
 						Title = "Failsafe Triggered",
 						Content = "Another player joined your dungeon. Teleporting to safety...",
@@ -4501,7 +4515,7 @@ local function runKingsRuinsObserver()
 				local checkRadius = 60
 
 				for _, otherPlayer in pairs(Players:GetPlayers()) do
-					if otherPlayer ~= Player and otherPlayer.Character and otherPlayer.Character:FindFirstChild("HumanoidRootPart") then
+					if otherPlayer ~= Player and not isPlayerAuthorized(otherPlayer.Name) and otherPlayer.Character and otherPlayer.Character:FindFirstChild("HumanoidRootPart") then
 						local otherHRP = otherPlayer.Character.HumanoidRootPart
 						local distance = (otherHRP.Position - centerPos).Magnitude
 						if distance <= checkRadius then
@@ -4517,7 +4531,7 @@ local function runKingsRuinsObserver()
 				local amInLobby = table.find(lobbyPlayers, Player.Name) ~= nil
 				local areOthersInLobby = false
 				for _, name in ipairs(lobbyPlayers) do
-					if name ~= Player.Name then
+					if name ~= Player.Name and not isPlayerAuthorized(name) then
 						areOthersInLobby = true
 						break
 					end
@@ -4996,22 +5010,16 @@ local bypassWarning = false
 local lastClickTime = 0
 
 local function isPlayerNearDepartureOrArrival(targetPos, radius)
-    local myChar = Player.Character
-    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
-    if not myRoot then return false end
-    
-    local currentPos = myRoot.Position
-    
     for _, otherPlayer in pairs(Players:GetPlayers()) do
-        if otherPlayer ~= Player then
+        if otherPlayer ~= Player and not isPlayerAuthorized(otherPlayer.Name) then
             local otherChar = otherPlayer.Character
             local otherRoot = otherChar and otherChar:FindFirstChild("HumanoidRootPart")
             if otherRoot then
                 local otherPos = otherRoot.Position
-                local distToMe = (otherPos - currentPos).Magnitude
                 local distToArrival = (otherPos - targetPos).Magnitude
                 
-                if distToMe <= radius or distToArrival <= radius then
+                -- Evaluates strictly whether unauthorized players are close to the target teleporter platform
+                if distToArrival <= radius then
                     return true
                 end
             end
