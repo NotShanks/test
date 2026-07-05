@@ -139,7 +139,12 @@ local function saveConfig()
 			EnableTweeningSafety = _G.EnableTweeningSafety,
 			KingsRuinsCompletedCount = _G.KingsRuinsCompletedCount,
 			DiscordWebhookURL = _G.DiscordWebhookURL,
-			DiscordMessageId = _G.DiscordMessageId -- Anchors webhook dashboard updates securely between repeated server teleports!
+			DiscordMessageId = _G.DiscordMessageId,
+			HighestGold = _G.HighestGold,
+			InitialGold = _G.InitialGold,
+			PreviousGold = _G.PreviousGold,
+			RecentDiffText = _G.RecentDiffText,
+			StartupTime = _G.StartupTime
 		}
 		pcall(function()
 			writefile(configFileName, HttpService:JSONEncode(data))
@@ -159,12 +164,24 @@ local function loadConfig()
 			_G.KingsRuinsCompletedCount = data.KingsRuinsCompletedCount or 0
 			_G.DiscordWebhookURL = data.DiscordWebhookURL or ""
 			_G.DiscordMessageId = data.DiscordMessageId or nil
+			_G.HighestGold = data.HighestGold or 0
+			_G.InitialGold = data.InitialGold or 0
+			_G.PreviousGold = data.PreviousGold or -1
+			_G.RecentDiffText = data.RecentDiffText or "➖ 0"
+			_G.StartupTime = data.StartupTime or os.time()
 		end
 	end
 end
 
+-- Initialize missing global fallbacks for new users
+if not _G.StartupTime then _G.StartupTime = os.time() end
+if not _G.HighestGold then _G.HighestGold = 0 end
+if not _G.InitialGold then _G.InitialGold = 0 end
+if not _G.PreviousGold then _G.PreviousGold = -1 end
+if not _G.RecentDiffText then _G.RecentDiffText = "➖ 0" end
+
 loadConfig()
-loadSharedConfig() -- Automatically inherits Webhook URL if set on any other account
+loadSharedConfig() -- Automatically inherits Webhook URL if set on any other accounta
 
 local function isEntityAlive(entity)
 	if not entity then return false end
@@ -392,14 +409,19 @@ end
 -- ==========================================
 -- DISCORD WEBHOOK SYSTEM & STATS INITIALIZATION
 -- ==========================================
-local startupTime = os.time()
-local initialGold = 0
 
-pcall(function()
-	if Player:FindFirstChild("Data") and Player.Data:FindFirstChild("Gold") then
-		initialGold = Player.Data.Gold.Value
+local function FormatNumber(n)
+	if not n then return "0" end
+	n = tostring(math.floor(n))
+	local formatted = n
+	while true do  
+		formatted, k = string.gsub(formatted, "^(-?%d+)(%d%d%d)", '%1,%2')
+		if (k==0) then
+			break
+		end
 	end
-end)
+	return formatted
+end
 
 local isSendingWebhook = false
 
@@ -419,21 +441,40 @@ local function sendWebhookNotification(statusState, statusMessage)
 	task.spawn(function()
 		local success, err = pcall(function()
 			local currentGold = 0
-			pcall(function()
-				if Player:FindFirstChild("Data") and Player.Data:FindFirstChild("Gold") then
-					currentGold = Player.Data.Gold.Value
-				end
-			end)
-			if initialGold == 0 and currentGold > 0 then
-				initialGold = currentGold
+			if Player:FindFirstChild("Data") and Player.Data:FindFirstChild("Gold") then
+				currentGold = Player.Data.Gold.Value
 			end
+			
+			-- Intialize trackers if picking up first values
+			if _G.InitialGold == 0 and currentGold > 0 then
+				_G.InitialGold = currentGold
+			end
+			if _G.PreviousGold == -1 and currentGold > 0 then
+				_G.PreviousGold = currentGold
+			end
+			
+			-- Track Highest Lifetime Peak Gold
+			if currentGold > _G.HighestGold then
+				_G.HighestGold = currentGold
+			end
+			
+			-- Identify the recent up/down movement compared to last check
+			local goldShift = currentGold - _G.PreviousGold
+			if goldShift > 0 then
+				_G.RecentDiffText = "🟢 📈 +" .. FormatNumber(goldShift)
+			elseif goldShift < 0 then
+				_G.RecentDiffText = "🔴 📉 " .. FormatNumber(goldShift)
+			end
+			_G.PreviousGold = currentGold -- Re-anchor for next tick
+			
+			saveConfig() -- Rapidly Cache Data to survive sudden Server Teleports!
 
-			local goldGained = math.max(0, currentGold - initialGold)
-			local elapsedSeconds = math.max(0, os.time() - startupTime)
+			local goldGained = math.max(0, currentGold - _G.InitialGold)
+			local elapsedSeconds = math.max(0, os.time() - _G.StartupTime)
 			local elapsedMinutes = elapsedSeconds / 60
 			local goldPerMin = elapsedMinutes > 0 and math.floor(goldGained / elapsedMinutes) or 0
 
-			-- Format Uptime
+			-- Format Persistent Uptime (Survives teleports!)
 			local hours = math.floor(elapsedSeconds / 3600)
 			local minutes = math.floor((elapsedSeconds % 3600) / 60)
 			local seconds = elapsedSeconds % 60
@@ -451,8 +492,6 @@ local function sendWebhookNotification(statusState, statusMessage)
 				failsafeStr = "🔴 Offline"
 			end
 
-			local shortJobId = game.JobId ~= "" and string.sub(game.JobId, 1, 8) or "Solo/Lobby"
-
 			local payload = {
 				username = Player.Name .. " Analytics",
 				avatar_url = "https://i.imgur.com/wSTFk6E.png",
@@ -462,41 +501,39 @@ local function sendWebhookNotification(statusState, statusMessage)
 					["description"] = "**Current Activity:**\n`" .. statusMessage .. "`",
 					["fields"] = {
 						-- Row 1: Session Health
-						{["name"] = "⏱️ Uptime", ["value"] = "**" .. uptimeStr .. "**", ["inline"] = true},
-						{["name"] = "⚔️ Dungeons Cleared", ["value"] = "**" .. tostring(_G.KingsRuinsCompletedCount) .. "**", ["inline"] = true},
-						{["name"] = "🪙 Current Gold", ["value"] = "**" .. tostring(currentGold) .. "**", ["inline"] = true},
-						-- Row 2: Farming Stats
-						{["name"] = "🌐 Server Node", ["value"] = "**" .. shortJobId .. "**", ["inline"] = true},
-						{["name"] = "⛏️ Grand Ores Left", ["value"] = "**" .. tostring(_G.GrandOresLeft) .. "**", ["inline"] = true},
-						{["name"] = "📈 Gold / Min", ["value"] = "**" .. tostring(goldPerMin) .. "**", ["inline"] = true},
-						-- Row 3: Account Assets
+						{["name"] = "⏱️ Persistent Uptime", ["value"] = "**" .. uptimeStr .. "**", ["inline"] = true},
+						{["name"] = "⚔️ Dungeons Cleared", ["value"] = "**" .. FormatNumber(_G.KingsRuinsCompletedCount) .. "**", ["inline"] = true},
+						{["name"] = "📈 Est. Gold / Min", ["value"] = "**" .. FormatNumber(goldPerMin) .. "**", ["inline"] = true},
+						
+						-- Row 2: Live Economy Tracking
+						{["name"] = "🪙 Current Gold", ["value"] = "**" .. FormatNumber(currentGold) .. "**", ["inline"] = true},
+						{["name"] = "💎 Session Yield", ["value"] = "**+" .. FormatNumber(goldGained) .. "**", ["inline"] = true},
+						{["name"] = "📊 Recent Session Shift", ["value"] = "**" .. _G.RecentDiffText .. "**", ["inline"] = true},
+						
+						-- Row 3: History & Hardware
+						{["name"] = "👑 Highest Gold Peak", ["value"] = "**" .. FormatNumber(_G.HighestGold) .. "**", ["inline"] = true},
 						{["name"] = "🛡️ Failsafe Status", ["value"] = "**" .. failsafeStr .. "**", ["inline"] = true},
-						{["name"] = "📦 Chests Left", ["value"] = "**" .. tostring(_G.ChestsLeft) .. "**", ["inline"] = true},
-						{["name"] = "💎 Session Yield", ["value"] = "**+" .. tostring(goldGained) .. " Gold**", ["inline"] = true}
+						{["name"] = "\u{200B}", ["value"] = "\u{200B}", ["inline"] = true} -- Empty spacer for 3-column layout alignment
 					},
 					["footer"] = { ["text"] = "System Time: " .. os.date("%X") }
 				}}
 			}
 			
 			local jsonPayload = HttpService:JSONEncode(payload)
-			local cleanUrl = string.gsub(_G.DiscordWebhookURL, "%s+", "") -- Sanitize whitespaces
+			
+			-- Strictly enforce Cleaned API URL (Prevents /messages ID routing collision causing Discord 404 POST failures)
+			local cleanUrl = string.gsub(_G.DiscordWebhookURL, "%s+", "") 
+			local baseUrl = string.match(cleanUrl, "^([^?]+)")
 
-            local reqHeaders = { 
-                ["Content-Type"] = "application/json",
-                ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36" 
-            }
+			local reqHeaders = { 
+				["Content-Type"] = "application/json",
+				["User-Agent"] = "UtilityHub/Client.Network" 
+			}
 
 			if not _G.DiscordMessageId then
-				-- First execution (Server Init without memory config): POST to generate the message entirely
-				local targetUrl = cleanUrl
-				if not string.find(cleanUrl, "%?") then
-					targetUrl = cleanUrl .. "?wait=true"
-				else
-					targetUrl = cleanUrl .. "&wait=true"
-				end
-
+				-- Execute standard POST and extract message_id for later edits
 				local res = httprequest({ 
-					Url = targetUrl, 
+					Url = baseUrl .. "?wait=true", 
 					Method = "POST", 
 					Headers = reqHeaders, 
 					Body = jsonPayload 
@@ -509,13 +546,13 @@ local function sendWebhookNotification(statusState, statusMessage)
 					end)
 					if successDec and dataDec and dataDec.id then 
 						_G.DiscordMessageId = dataDec.id 
-						saveConfig() -- Rapid Cache Syncing keeps discord Ratelimits isolated between specific hops seamlessly!
+						saveConfig() -- Lock Message_ID to surviving folder state
 					end
 				end
 			else
-				-- Subsequent Executions / Teleport Carryovers: PATCH existing dashboard card dynamically
+				-- Patch API Call securely directly attached to existing tracked Discord message identifier
 				local patchRes = httprequest({ 
-					Url = cleanUrl .. "/messages/" .. _G.DiscordMessageId, 
+					Url = baseUrl .. "/messages/" .. tostring(_G.DiscordMessageId), 
 					Method = "PATCH", 
 					Headers = reqHeaders, 
 					Body = jsonPayload 
@@ -523,7 +560,7 @@ local function sendWebhookNotification(statusState, statusMessage)
 				
 				if patchRes then
 					local responseCode = patchRes.StatusCode or patchRes.status_code or patchRes.code
-					-- Force completely recreate a new tracker message if a discord mod/user manually deletes the original one to clear their logs
+					-- Handles automatic regeneration if Discord Administrators manually delete the logged dashboard
 					if responseCode and (responseCode == 404 or responseCode == 400 or responseCode == 401) then
 						_G.DiscordMessageId = nil
 						saveConfig()
