@@ -49,10 +49,12 @@ _G.SavedOriginalPosition = nil
 
 -- Kings Ruins Automation Variables
 _G.AutoKingsRuins = false
+_G.KingsRuinsCompletedCount = 0
+_G.DiscordWebhookURL = ""
 local originalCameraType = Camera.CameraType
 local originalCameraCFrame = Camera.CFrame
 local visualRadiusSphere = nil
-local statusUILabel = nil -- Will reference the UI status label
+local statusUILabel = nil 
 
 -- Sea World
 _G.AutoAmbrosia = false
@@ -65,12 +67,15 @@ local gatesClickConnectionBegan, gatesClickConnectionEnded, gatesClickRunService
 local specConnectionBegan, specConnectionEnded, specRunService
 
 local configFileName = "Luna_UtilityHub_Config.json"
+local cacheFileName = "Luna_ServerSeasonCache.json"
 
 local function saveConfig()
 	if writefile then
 		local data = {
 			AutoKingsRuins = _G.AutoKingsRuins,
-			EnableTweeningSafety = _G.EnableTweeningSafety
+			EnableTweeningSafety = _G.EnableTweeningSafety,
+			KingsRuinsCompletedCount = _G.KingsRuinsCompletedCount,
+			DiscordWebhookURL = _G.DiscordWebhookURL
 		}
 		pcall(function()
 			writefile(configFileName, HttpService:JSONEncode(data))
@@ -86,6 +91,8 @@ local function loadConfig()
 		if success and data then
 			_G.AutoKingsRuins = data.AutoKingsRuins or false
 			_G.EnableTweeningSafety = data.EnableTweeningSafety or false
+			_G.KingsRuinsCompletedCount = data.KingsRuinsCompletedCount or 0
+			_G.DiscordWebhookURL = data.DiscordWebhookURL or ""
 		end
 	end
 end
@@ -315,28 +322,166 @@ local function updateUIRunsStatus(text)
 	end
 end
 
-local function doServerHop()
-	local TeleportService = game:GetService("TeleportService")
-	local PlaceId = game.PlaceId
-	local JobId = game.JobId
+-- ==========================================
+-- DISCORD WEBHOOK SYSTEM
+-- ==========================================
+local function sendWebhookNotification(statusMessage)
+	if not _G.DiscordWebhookURL or _G.DiscordWebhookURL == "" then return end
 	
-	local success, result = pcall(function()
-		local servers = {}
-		local req = game:HttpGet("https://games.roblox.com/v1/games/" .. PlaceId .. "/servers/Public?sortOrder=Desc&limit=100&excludeFullGames=true")
-		local body = HttpService:JSONDecode(req)
+	task.spawn(function()
+		local goldValue = "N/A"
+		pcall(function()
+			if Player:FindFirstChild("Data") and Player.Data:FindFirstChild("Gold") then
+				goldValue = tostring(Player.Data.Gold.Value)
+			end
+		end)
+		
+		local data = {
+			["embeds"] = {{
+				["title"] = "Utility Hub - Status Log",
+				["color"] = 3066993, -- Soft aesthetic green
+				["fields"] = {
+					{["name"] = "Player", ["value"] = Player.Name, ["inline"] = true},
+					{["name"] = "Gold", ["value"] = goldValue, ["inline"] = true},
+					{["name"] = "Completed Runs", ["value"] = tostring(_G.KingsRuinsCompletedCount), ["inline"] = true},
+					{["name"] = "Update", ["value"] = statusMessage, ["inline"] = false}
+				},
+				["timestamp"] = DateTime.now():ToISO8601Value()
+			}}
+		}
+		
+		local headers = {["Content-Type"] = "application/json"}
+		pcall(function()
+			local request = syn and syn.request or http and http.request or http_request or request
+			if request then
+				request({
+					Url = _G.DiscordWebhookURL,
+					Method = "POST",
+					Headers = headers,
+					Body = HttpService:JSONEncode(data)
+				})
+			end
+		end)
+	end)
+end
 
-		if body and body.data then
-			for i, v in next, body.data do
-				if type(v) == "table" and tonumber(v.playing) and tonumber(v.maxPlayers) and v.playing < v.maxPlayers and v.id ~= JobId then
-					table.insert(servers, v.id)
+-- ==========================================
+-- SEASON CACHE & SMART PROJECTED SERVER HOP
+-- ==========================================
+local function updateCurrentServerCache()
+	if isInDungeon() or game.JobId == "" then return end
+	local effects = workspace:FindFirstChild("Effects")
+	local dayObj = effects and effects:FindFirstChild("Day")
+	local ui = Player:FindFirstChild("PlayerGui")
+	local timeTextObj = ui and ui:FindFirstChild("Moves") and ui.Moves:FindFirstChild("Bars") and ui.Moves.Bars:FindFirstChild("Time")
+	
+	if dayObj and timeTextObj then
+		local currentDay = dayObj.Value
+		local timeText = timeTextObj.Text
+		local hoursStr, minutesStr = string.match(timeText, "(%d+):(%d+)")
+		if hoursStr and minutesStr then
+			local gameMins = (tonumber(hoursStr) * 60) + tonumber(minutesStr)
+			
+			local cache = {}
+			if isfile and isfile(cacheFileName) then
+				pcall(function()
+					cache = HttpService:JSONDecode(readfile(cacheFileName))
+				end)
+			end
+			
+			cache[game.JobId] = {
+				day = currentDay,
+				gameMins = gameMins,
+				realTime = os.time()
+			}
+			
+			-- Evict cache listings older than 12 hours
+			local now = os.time()
+			for job, data in pairs(cache) do
+				if now - data.realTime > 43200 then
+					cache[job] = nil
+				end
+			end
+			
+			pcall(function()
+				writefile(cacheFileName, HttpService:JSONEncode(cache))
+			end)
+		end
+	end
+end
+
+-- Start a continuous background profile updater for the current node
+task.spawn(function()
+	while task.wait(10) do
+		pcall(updateCurrentServerCache)
+	end
+end)
+
+local function getTargetServerFromCache()
+	if not isfile or not isfile(cacheFileName) then return nil end
+	
+	local cache = {}
+	pcall(function()
+		cache = HttpService:JSONDecode(readfile(cacheFileName))
+	end)
+	
+	local now = os.time()
+	local bestJobId = nil
+	local bestTimeRemaining = 9999
+	
+	for jobId, data in pairs(cache) do
+		if jobId ~= game.JobId then
+			local elapsedRealSeconds = now - data.realTime
+			local elapsedGameMins = (elapsedRealSeconds / REAL_SECONDS_PER_DAY) * IN_GAME_MINUTES_PER_DAY
+			local projectedTotalMins = data.gameMins + elapsedGameMins
+			
+			local totalGameDaysElapsed = math.floor(projectedTotalMins / IN_GAME_MINUTES_PER_DAY)
+			local finalProjectedDay = data.day + totalGameDaysElapsed
+			local currentMinsInDay = projectedTotalMins % IN_GAME_MINUTES_PER_DAY
+			
+			local remainder = finalProjectedDay % 8
+			if remainder == 0 then remainder = 8 end
+			
+			local isFallOrSpring = (remainder == 3 or remainder == 4 or remainder == 7 or remainder == 8)
+			
+			local daysDifference = 0
+			if remainder == 1 or remainder == 2 then
+				daysDifference = 3 - remainder
+			elseif remainder == 5 or remainder == 6 then
+				daysDifference = 7 - remainder
+			elseif remainder == 3 or remainder == 4 then
+				daysDifference = 5 - remainder
+			elseif remainder == 7 or remainder == 8 then
+				daysDifference = 9 - remainder
+			end
+			
+			local gameMinsRemainingToday = IN_GAME_MINUTES_PER_DAY - currentMinsInDay
+			local totalGameMinsLeft = gameMinsRemainingToday + ((daysDifference - 1) * IN_GAME_MINUTES_PER_DAY)
+			local realSecondsLeft = totalGameMinsLeft * REAL_SECONDS_PER_GAME_MIN
+			
+			if isFallOrSpring or realSecondsLeft <= 120 then
+				if realSecondsLeft < bestTimeRemaining then
+					bestTimeRemaining = realSecondsLeft
+					bestJobId = jobId
 				end
 			end
 		end
+	end
+	
+	return bestJobId
+end
 
-		if #servers > 0 then
-			TeleportService:TeleportToPlaceInstance(PlaceId, servers[math.random(1, #servers)], Player)
-		end
-	end)
+local function executeProjectedServerHop()
+	local cachedJobId = getTargetServerFromCache()
+	if cachedJobId then
+		updateUIRunsStatus("Hopping to cached target server...")
+		local TeleportService = game:GetService("TeleportService")
+		pcall(function()
+			TeleportService:TeleportToPlaceInstance(game.PlaceId, cachedJobId, Player)
+		end)
+	else
+		doServerHop()
+	end
 end
 
 _G.CancelTween = false
@@ -1285,7 +1430,7 @@ function Luna:CreateWindow(WindowSettings)
 	BlurModule(Main)
 
 	if WindowSettings.KeySystem then
-		local KeySettings = WindowSettings.KeySettings
+		local KeySettings = WindowSettings.KeySystem
 		Draggable(Dragger, Main)
 		Draggable(LunaUI.MobileSupport, LunaUI.MobileSupport)
 		if dragBar then Draggable(dragInteract, Main, true, 255) end
@@ -1528,7 +1673,7 @@ function Luna:CreateWindow(WindowSettings)
 						Content = "Searching for active public instances...", 
 						Icon = "autorenew"
 					})
-					doServerHop()
+					executeProjectedServerHop()
 				end)
 			end
 		end
@@ -2278,6 +2423,22 @@ function Luna:CreateWindow(WindowSettings)
 					if type(DropdownSettings.CurrentOption) == "string" then DropdownSettings.CurrentOption = {DropdownSettings.CurrentOption} end
 				else
 					DropdownSettings.CurrentOption = {}
+				end
+
+				function DropdownV:Set(NewDropdownSettings)
+					NewDropdownSettings = Kwargify(DropdownSettings, NewDropdownSettings or {})
+					DropdownV.Settings = NewDropdownSettings
+					DropdownSettings = NewDropdownSettings
+					Dropdown.Name = DropdownSettings.Name
+					Dropdown.Title.Text = DropdownSettings.Name
+					Refresh()
+
+					if DropdownSettings.MultipleOptions then
+						Dropdown.Selected.PlaceholderText = #DropdownSettings.CurrentOption == 1 and DropdownSettings.CurrentOption[1] or #DropdownSettings.CurrentOption == 0 and "None" or unpackt(DropdownSettings.CurrentOption)
+					else
+						Dropdown.Selected.PlaceholderText = DropdownSettings.CurrentOption[1] or "None"
+					end
+					Dropdown.Selected.Text = ""
 				end
 
 				function DropdownV:Set(NewDropdownSettings)
@@ -3352,6 +3513,33 @@ local function teleportToExitGate()
 	end
 end
 
+-- Active hostiles and chest validation checks
+local function isDungeonClear()
+	local mobsFolder = workspace:FindFirstChild("Mobs")
+	local chestsFolder = workspace:FindFirstChild("Chests")
+	
+	local activeMobs = 0
+	if mobsFolder then
+		for _, mob in pairs(mobsFolder:GetChildren()) do
+			if isEntityAlive(mob) then
+				activeMobs = activeMobs + 1
+			end
+		end
+	end
+	
+	local activeChests = 0
+	if chestsFolder then
+		for _, chest in pairs(chestsFolder:GetChildren()) do
+			local prompt = chest:FindFirstChildWhichIsA("ProximityPrompt", true)
+			if prompt and prompt.Enabled then
+				activeChests = activeChests + 1
+			end
+		end
+	end
+	
+	return (activeMobs == 0 and activeChests == 0)
+end
+
 local function startExitCheckWatcher()
 	task.spawn(function()
 		while _G.AutoDungeon do
@@ -3364,36 +3552,16 @@ local function startExitCheckWatcher()
 				if activeFloor and activeFloor.Name == "Floor3" then
 					local arena = activeFloor:FindFirstChild("KingsRuinsArena")
 					if arena then
-						local elvenAlive = false
-						local mobsFolder = workspace:FindFirstChild("Mobs")
-						if mobsFolder then
-							for _, mob in pairs(mobsFolder:GetChildren()) do
-								if mob.Name == "Elven Sorceress" and isEntityAlive(mob) then
-									elvenAlive = true
-									break
-								end
-							end
-						end
-						
 						local door = arena:FindFirstChild("Doors") and arena.Doors:FindFirstChild("DoorMain")
 						local prompt = door and door:FindFirstChildWhichIsA("ProximityPrompt", true)
 						local doorOpened = prompt and not prompt.Enabled
 						
-						if doorOpened and not elvenAlive then
-							local chestCount = countChests()
-							local mimicCount = 0
-							if mobsFolder then
-								for _, mob in pairs(mobsFolder:GetChildren()) do
-									if mob.Name == "DungeonMimicChest" and isEntityAlive(mob) then
-										mimicCount = mimicCount + 1
-									end
-								end
-							end
-							
-							if chestCount == 0 and mimicCount == 0 then
-								teleportToExitGate()
-								break
-							end
+						if doorOpened and isDungeonClear() then
+							_G.KingsRuinsCompletedCount = _G.KingsRuinsCompletedCount + 1
+							saveConfig()
+							sendWebhookNotification("Kings Ruins Dungeon Completed Successfully!")
+							teleportToExitGate()
+							break
 						end
 					end
 				end
@@ -3817,12 +3985,17 @@ local function configureCameraForKingsRuins(enable)
 		local targetTeleport = workspace:FindFirstChild("KingsRuinsTeleport")
 		if targetTeleport then
 			Camera.CameraType = Enum.CameraType.Scriptable
-			-- Negated Z axis to -150 to pivot the perspective 180 degrees
-			Camera.CFrame = CFrame.lookAt(targetTeleport:GetPivot().Position + Vector3.new(0, 120, -150), targetTeleport:GetPivot().Position)
+			Camera.CFrame = CFrame.lookAt(targetTeleport:GetPivot().Position + Vector3.new(0, 50, -70), targetTeleport:GetPivot().Position)
 		end
 	else
 		Camera.CameraType = originalCameraType
 		Camera.CFrame = originalCameraCFrame
+		
+		local char = Player.Character
+		local humanoid = char and char:FindFirstChildWhichIsA("Humanoid")
+		if humanoid then
+			Camera.CameraSubject = humanoid
+		end
 	end
 end
 
@@ -3860,14 +4033,9 @@ local function executeKingsRuinsEntrance()
 			local char = Player.Character
 			local hrp = char and char:FindFirstChild("HumanoidRootPart")
 			if hrp then
-				local originalCFrame = hrp.CFrame
-				hrp.CFrame = triggerPart.CFrame
-				task.wait(0.1)
 				firetouchinterest(hrp, triggerPart, 0)
 				task.wait(0.05)
 				firetouchinterest(hrp, triggerPart, 1)
-				task.wait(0.1)
-				hrp.CFrame = originalCFrame
 			end
 		end
 	end
@@ -3882,8 +4050,6 @@ local function executeKingsRuinsLeave()
 			if hrp then
 				for _, part in pairs(barrier:GetChildren()) do
 					if part:IsA("BasePart") and part:FindFirstChildWhichIsA("TouchTransmitter") then
-						hrp.CFrame = part.CFrame
-						task.wait(0.1)
 						firetouchinterest(hrp, part, 0)
 						task.wait(0.05)
 						firetouchinterest(hrp, part, 1)
@@ -3895,7 +4061,6 @@ local function executeKingsRuinsLeave()
 	end
 end
 
--- Robust name-matching parser for child hierarchy inside PlayerList
 local function getLobbyPlayers()
 	local lobbyPlayers = {}
 	local listModel = workspace:FindFirstChild("KingsRuinsTeleport") and workspace.KingsRuinsTeleport:FindFirstChild("PlayerList")
@@ -3934,9 +4099,9 @@ local function runKingsRuinsObserver()
 				if seasonStatus == "Inactive" then
 					if remainingTime > 120 then
 						updateUIRunsStatus("Wrong season | Server Hopping")
-						Luna:Notification({Title = "Auto Kings Ruins", Content = "Incorrect season. Hopping to another node...", Icon = "autorenew"})
+						Luna:Notification({Title = "Auto Kings Ruins", Content = "Incorrect season. Hopping to target server Profile...", Icon = "autorenew"})
 						task.wait(2)
-						doServerHop()
+						executeProjectedServerHop()
 						return
 					else
 						updateUIRunsStatus("Season starts in " .. math.floor(remainingTime) .. "s")
@@ -4014,13 +4179,17 @@ local function runKingsRuinsObserver()
 					
 					updateUIRunsStatus("Waiting for start (" .. startsInText .. ")")
 				else
+					-- Waiting patiently configuration applied per requested parameters
 					if isAnyPlayerInRadius then
-						updateUIRunsStatus("Area blocked by players")
+						updateUIRunsStatus("Area blocked by players | Waiting patiently")
 					else
-						if startsInText == "" or startsInText == "TELEPORTING PARTY" then
+						if startsInText == "TELEPORTING PARTY" then
 							updateUIRunsStatus("Waiting for portal status to clear")
-						else
+						elseif startsInText == "" then
 							updateUIRunsStatus("Entering Lobby")
+							executeKingsRuinsEntrance()
+						else
+							updateUIRunsStatus("Entering Lobby (Timer Active)")
 							executeKingsRuinsEntrance()
 						end
 					end
@@ -4985,6 +5154,24 @@ secMiscCore:CreateButton({
 	end
 })
 
+local secWebhook = tabMisc:CreateSection("Webhook Integration")
+
+secWebhook:CreateButton({
+	Name = "Paste Webhook URL from Clipboard",
+	Description = "Assign your Discord Webhook URL directly from your clipboard.",
+	Callback = function()
+		local clipboard = getclipboard and getclipboard() or ""
+		if clipboard and string.find(clipboard, "discord.com/api/webhooks") then
+			_G.DiscordWebhookURL = clipboard
+			saveConfig()
+			Luna:Notification({Title = "Webhook Config", Content = "Discord webhook URL applied successfully.", Icon = "check_circle_outline"})
+			sendWebhookNotification("Webhook profile linked to client successfully!")
+		else
+			Luna:Notification({Title = "Webhook Config", Content = "Invalid clipboard content. Please copy a valid Discord webhook URL.", Icon = "warning"})
+		end
+	end
+})
+
 local secDestruct = tabMisc:CreateSection("Self-Destruct")
 secDestruct:CreateButton({
 	Name = "Unload Framework UI",
@@ -5067,6 +5254,19 @@ task.spawn(function()
 	task.wait(1.5)
 	if isInDungeon() then
 		if _G.AutoKingsRuins then
+			updateUIRunsStatus("Waiting for Map Load...")
+			local genMap = workspace:FindFirstChild("GeneratedMap")
+			local mapLoaded = genMap and genMap:WaitForChild("MapLoaded", 30)
+			
+			if mapLoaded then
+				while mapLoaded.Value ~= true do
+					task.wait(0.5)
+				end
+			end
+			
+			updateUIRunsStatus("Map verified. Loading assets (3s delay)...")
+			task.wait(3)
+			
 			_G.AutoDungeon = true
 			Luna:Notification({Title = "Auto Dungeon", Content = "Entering Kings Ruins. Initiating Dungeon automation...", Icon = "uautodungeon"})
 			StartMasterAutoDungeon()
