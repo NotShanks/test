@@ -579,10 +579,11 @@ if _G.TeleportFailConnection then
 	_G.TeleportFailConnection = nil
 end
 
+local isHoppingCurrently = false
+
 _G.TeleportFailConnection = TeleportService.TeleportInitFailed:Connect(function(player, teleportResult, errorMessage)
 	if _G.LastTargetedJobId then
 		_G.FailedCachedJobs[_G.LastTargetedJobId] = true
-		-- Instantly purge the bad server from the cache file
 		pcall(function()
 			ensureConfigFolder()
 			if isfile and isfile(cacheFileName) then
@@ -596,13 +597,12 @@ _G.TeleportFailConnection = TeleportService.TeleportInitFailed:Connect(function(
 		_G.LastTargetedJobId = nil
 	end
 
-	-- The Magic Fix: Never let the hopper give up on a silent backend failure!
-	if updateUIRunsStatus then
-		updateUIRunsStatus("Routing intercepted (Full). Re-attempting...")
-	end
+	if updateUIRunsStatus then updateUIRunsStatus("Roblox Teleport Rejected. Recovering...") end
 	
-	task.delay(2.5, function()
-		pcall(executeProjectedServerHop)
+	isHoppingCurrently = false -- Unlock hopping thread instantly so it isn't paralyzed
+	
+	task.delay(1.5, function()
+		pcall(doServerHop) -- Only force a safe public server bypass after an API hang!
 	end)
 end)
 
@@ -716,62 +716,70 @@ local function doServerHop()
 	local PlaceId = game.PlaceId
 	local JobId = game.JobId
 	
-	-- Fail-safe timeout watcher: If 15 seconds pass and we STILL haven't left, reboot the entire process!
-	_G.HopAttemptTimer = tick()
-	task.spawn(function()
-		local snapshotTime = _G.HopAttemptTimer
-		task.wait(15)
-		if _G.HopAttemptTimer == snapshotTime then
-			updateUIRunsStatus("Hop stalled out. Forcing new request...")
-			pcall(executeProjectedServerHop)
-		end
-	end)
+	if isHoppingCurrently then return end
+	isHoppingCurrently = true
+	updateUIRunsStatus("Searching for reliable lobbies...")
 	
-	local success, result = pcall(function()
-		local servers = {}
-		-- CHANGE: sortOrder=Asc drastically filters out overly jammed public servers reducing failures!
-		local req = game:HttpGet("https://games.roblox.com/v1/games/" .. PlaceId .. "/servers/Public?sortOrder=Asc&limit=100&excludeFullGames=true")
-		local body = HttpService:JSONDecode(req)
+	task.spawn(function()
+		local success, result = pcall(function()
+			-- Sorting Desc ensures we do NOT get placed into corrupted 1-player servers!
+			local req = game:HttpGet("https://games.roblox.com/v1/games/" .. PlaceId .. "/servers/Public?sortOrder=Desc&limit=100&excludeFullGames=true")
+			local body = HttpService:JSONDecode(req)
 
-		if body and body.data then
-			for _, v in pairs(body.data) do
-				if type(v) == "table" and tonumber(v.playing) and tonumber(v.maxPlayers) then
-					-- Filter 0 player buggy servers AND near-max players servers to ensure space.
-					if v.playing < (v.maxPlayers - 2) and v.playing >= 1 and v.id ~= JobId then
-						table.insert(servers, v.id)
+			local validServers = {}
+			if body and body.data then
+				for _, v in pairs(body.data) do
+					if type(v) == "table" and tonumber(v.playing) and tonumber(v.maxPlayers) then
+						local players = tonumber(v.playing)
+						local max = tonumber(v.maxPlayers)
+						
+						-- Ensure server is nicely populated (but has AT LEAST 2 slots left), not a bugged lobby.
+						if players > 2 and players <= (max - 2) and v.id ~= JobId then
+							table.insert(validServers, v.id)
+						end
 					end
 				end
 			end
-		end
 
-		if #servers > 0 then
-			local selectedInstance = servers[math.random(1, #servers)]
-			_G.LastTargetedJobId = selectedInstance -- Trick: Label random servers as 'Targets' too so they can be blacklisted if they are busted!
-			TeleportService:TeleportToPlaceInstance(PlaceId, selectedInstance, Player)
-		else
+			if #validServers > 0 then
+				local selectedInstance = validServers[math.random(1, #validServers)]
+				_G.LastTargetedJobId = selectedInstance
+				TeleportService:TeleportToPlaceInstance(PlaceId, selectedInstance, Player)
+			else
+				-- Absolute Ultimate Fallback: Basic connection
+				updateUIRunsStatus("Server map locked. Standard rejoining...")
+				TeleportService:Teleport(PlaceId, Player)
+			end
+		end)
+		
+		if not success then
+			warn("Utility Hub Hopper Error: " .. tostring(result))
 			TeleportService:Teleport(PlaceId, Player)
 		end
+		
+		-- Give TeleportService maximum of 12 seconds to resolve. If you're still in game, release the lock!
+		task.wait(12)
+		isHoppingCurrently = false
 	end)
-	
-	if not success then
-		warn("Utility Hub Hopper Error: " .. tostring(result))
-		pcall(function()
-			TeleportService:Teleport(PlaceId, Player)
-		end)
-	end
 end
 
 local function executeProjectedServerHop()
+	if isHoppingCurrently then return end 
+	
 	local cachedJobId = getTargetServerFromCache()
 	
-	-- 2. Prevent infinite 10-second failure loops by aggressively routing outwards after 4 tries
 	if cachedJobId and _G.ConsecutiveHopAttempts < 4 then
 		_G.ConsecutiveHopAttempts = _G.ConsecutiveHopAttempts + 1
 		updateUIRunsStatus("Hopping to profile (" .. _G.ConsecutiveHopAttempts .. "/4)")
-		
 		_G.LastTargetedJobId = cachedJobId
-		pcall(function()
-			TeleportService:TeleportToPlaceInstance(game.PlaceId, cachedJobId, Player)
+		
+		isHoppingCurrently = true
+		task.spawn(function()
+			pcall(function()
+				TeleportService:TeleportToPlaceInstance(game.PlaceId, cachedJobId, Player)
+			end)
+			task.wait(12)
+			isHoppingCurrently = false
 		end)
 	else
 		if _G.ConsecutiveHopAttempts >= 4 then
