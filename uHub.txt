@@ -595,6 +595,15 @@ _G.TeleportFailConnection = TeleportService.TeleportInitFailed:Connect(function(
 		end)
 		_G.LastTargetedJobId = nil
 	end
+
+	-- The Magic Fix: Never let the hopper give up on a silent backend failure!
+	if updateUIRunsStatus then
+		updateUIRunsStatus("Routing intercepted (Full). Re-attempting...")
+	end
+	
+	task.delay(2.5, function()
+		pcall(executeProjectedServerHop)
+	end)
 end)
 
 local function updateCurrentServerCache()
@@ -707,15 +716,28 @@ local function doServerHop()
 	local PlaceId = game.PlaceId
 	local JobId = game.JobId
 	
+	-- Fail-safe timeout watcher: If 15 seconds pass and we STILL haven't left, reboot the entire process!
+	_G.HopAttemptTimer = tick()
+	task.spawn(function()
+		local snapshotTime = _G.HopAttemptTimer
+		task.wait(15)
+		if _G.HopAttemptTimer == snapshotTime then
+			updateUIRunsStatus("Hop stalled out. Forcing new request...")
+			pcall(executeProjectedServerHop)
+		end
+	end)
+	
 	local success, result = pcall(function()
 		local servers = {}
-		local req = game:HttpGet("https://games.roblox.com/v1/games/" .. PlaceId .. "/servers/Public?sortOrder=Desc&limit=100&excludeFullGames=true")
+		-- CHANGE: sortOrder=Asc drastically filters out overly jammed public servers reducing failures!
+		local req = game:HttpGet("https://games.roblox.com/v1/games/" .. PlaceId .. "/servers/Public?sortOrder=Asc&limit=100&excludeFullGames=true")
 		local body = HttpService:JSONDecode(req)
 
 		if body and body.data then
 			for _, v in pairs(body.data) do
 				if type(v) == "table" and tonumber(v.playing) and tonumber(v.maxPlayers) then
-					if v.playing < v.maxPlayers and v.id ~= JobId then
+					-- Filter 0 player buggy servers AND near-max players servers to ensure space.
+					if v.playing < (v.maxPlayers - 2) and v.playing >= 1 and v.id ~= JobId then
 						table.insert(servers, v.id)
 					end
 				end
@@ -724,6 +746,7 @@ local function doServerHop()
 
 		if #servers > 0 then
 			local selectedInstance = servers[math.random(1, #servers)]
+			_G.LastTargetedJobId = selectedInstance -- Trick: Label random servers as 'Targets' too so they can be blacklisted if they are busted!
 			TeleportService:TeleportToPlaceInstance(PlaceId, selectedInstance, Player)
 		else
 			TeleportService:Teleport(PlaceId, Player)
@@ -4530,28 +4553,30 @@ local function handleVisualRadius(enable)
 			local center = targetTeleport:GetPivot().Position
 			
 			local function createZone(name, radius, color, trans)
-				local sphere = Instance.new("Part")
-				sphere.Name = "Luna_Zone_" .. name
-				sphere.Shape = Enum.PartType.Ball
-				sphere.Size = Vector3.new(radius * 2, radius * 2, radius * 2) 
-				sphere.Color = color
-				sphere.Material = Enum.Material.ForceField
-				sphere.Transparency = trans
-				sphere.Anchored = true
-				sphere.CanCollide = false
-				sphere.Position = center
-				sphere.Parent = workspace
-				table.insert(visualRings, sphere)
+				-- Using a block Part mapped with a CylinderMesh creates a flat circle (AoE Radar Ring) 
+				-- Because it's perfectly flat, it cannot obscure your screen and you can easily read through it!
+				local disk = Instance.new("Part")
+				disk.Name = "Luna_Zone_" .. name
+				disk.Size = Vector3.new(radius * 2, 0.2, radius * 2) -- Spread out wide, extremely thin vertically
+				disk.Color = color
+				disk.Material = Enum.Material.Neon -- Swapped to Neon instead of ForceField to avoid map glare
+				disk.Transparency = trans
+				disk.Anchored = true
+				disk.CanCollide = false
+				-- Offset slightly off the ground level (+1 on Y Axis) to stop map Z-Fighting graphics flickering
+				disk.Position = center + Vector3.new(0, 1.5, 0)
+				disk.Parent = workspace
+				
+				local mesh = Instance.new("CylinderMesh")
+				mesh.Parent = disk
+
+				table.insert(visualRings, disk)
 			end
 
-			-- Zone 1: Core Sightline / Nameplate Range
-			createZone("Core", 75, Color3.fromRGB(255, 0, 0), 0.7)
-			
-			-- Zone 2: Danger / Approaching Sprint Range
+			-- Because they overlap, layering transparency nicely produces radar banding colors:
+			createZone("Core", 75, Color3.fromRGB(255, 0, 0), 0.70)
 			createZone("Mid", 180, Color3.fromRGB(255, 128, 0), 0.85)
-			
-			-- Zone 3: Radar / Peripheral Entry
-			createZone("Outer", 350, Color3.fromRGB(0, 255, 128), 0.93)
+			createZone("Outer", 350, Color3.fromRGB(0, 255, 128), 0.91)
 		end
 	end
 end
