@@ -151,10 +151,9 @@ local function saveConfig()
 			KingsRuinsCompletedCount = _G.KingsRuinsCompletedCount,
 			DiscordWebhookURL = _G.DiscordWebhookURL,
 			DiscordMessageId = _G.DiscordMessageId,
-			HighestGoldGained = _G.HighestGoldGained,
+			HighestGoldPerMin = _G.HighestGoldPerMin,
 			InitialGold = _G.InitialGold,
-			PreviousGold = _G.PreviousGold,
-			RecentDiffText = _G.RecentDiffText,
+			LastResortCount = _G.LastResortCount,
 			StartupTime = _G.StartupTime
 		}
 		pcall(function()
@@ -175,10 +174,9 @@ local function loadConfig()
 			_G.KingsRuinsCompletedCount = data.KingsRuinsCompletedCount or 0
 			_G.DiscordWebhookURL = data.DiscordWebhookURL or ""
 			_G.DiscordMessageId = data.DiscordMessageId or nil
-			_G.HighestGoldGained = data.HighestGoldGained or 0
+			_G.HighestGoldPerMin = data.HighestGoldPerMin or 0
 			_G.InitialGold = data.InitialGold or 0
-			_G.PreviousGold = data.PreviousGold or -1
-			_G.RecentDiffText = data.RecentDiffText or "➖ 0"
+			_G.LastResortCount = data.LastResortCount or 0
 			_G.StartupTime = data.StartupTime or os.time()
 		end
 	end
@@ -186,10 +184,9 @@ end
 
 -- Initialize missing global fallbacks for persistent tracking across teleports
 if not _G.StartupTime then _G.StartupTime = os.time() end
-if not _G.HighestGoldGained then _G.HighestGoldGained = 0 end
+if not _G.HighestGoldPerMin then _G.HighestGoldPerMin = 0 end
 if not _G.InitialGold then _G.InitialGold = 0 end
-if not _G.PreviousGold then _G.PreviousGold = -1 end
-if not _G.RecentDiffText then _G.RecentDiffText = "➖ 0" end
+if not _G.LastResortCount then _G.LastResortCount = 0 end
 
 loadConfig()
 loadSharedConfig() -- Automatically inherits Webhook URL if set on any other account
@@ -457,28 +454,19 @@ local function sendWebhookNotification(statusState, statusMessage)
 			if _G.InitialGold == 0 and currentGold > 0 then
 				_G.InitialGold = currentGold
 			end
-			if _G.PreviousGold == -1 and currentGold > 0 then
-				_G.PreviousGold = currentGold
-			end
 			
 			local goldGained = math.max(0, currentGold - _G.InitialGold)
-			if goldGained > _G.HighestGoldGained then
-				_G.HighestGoldGained = goldGained
-			end
-			
-			local goldShift = currentGold - _G.PreviousGold
-			if goldShift > 0 then
-				_G.RecentDiffText = "🟢 📈 +" .. FormatNumber(goldShift)
-			elseif goldShift < 0 then
-				_G.RecentDiffText = "🔴 📉 " .. FormatNumber(goldShift)
-			end
-			_G.PreviousGold = currentGold 
-			
 			saveConfig()
 
-			local elapsedSeconds = math.max(0, os.time() - _G.StartupTime)
+			-- Securely divide total uptime checking for estimated min thresholds
+			local elapsedSeconds = math.max(1, os.time() - _G.StartupTime)
 			local elapsedMinutes = elapsedSeconds / 60
-			local goldPerMin = elapsedMinutes > 0 and math.floor(goldGained / elapsedMinutes) or 0
+			local goldPerMin = math.floor(goldGained / elapsedMinutes)
+
+			if goldPerMin > _G.HighestGoldPerMin then
+				_G.HighestGoldPerMin = goldPerMin
+				saveConfig()
+			end
 
 			local hours = math.floor(elapsedSeconds / 3600)
 			local minutes = math.floor((elapsedSeconds % 3600) / 60)
@@ -491,6 +479,9 @@ local function sendWebhookNotification(statusState, statusMessage)
 			if statusState == "FAILSAFE" then
 				embedColor = 16753920 
 				failsafeStr = "⚠️ Tripped"
+			elseif statusState == "LAST RESORT" then
+				embedColor = 10181046
+				failsafeStr = "🪦 System Fatal Error Recovering"
 			elseif statusState == "TERMINATED" then
 				embedColor = 16711680 
 				failsafeStr = "🔴 Offline"
@@ -506,13 +497,13 @@ local function sendWebhookNotification(statusState, statusMessage)
 					["fields"] = {
 						{["name"] = "⏱️ Persistent Uptime", ["value"] = "**" .. uptimeStr .. "**", ["inline"] = true},
 						{["name"] = "⚔️ Dungeons Cleared", ["value"] = "**" .. FormatNumber(_G.KingsRuinsCompletedCount) .. "**", ["inline"] = true},
-						{["name"] = "📈 Est. Gold / Min", ["value"] = "**+" .. FormatNumber(goldPerMin) .. "**", ["inline"] = true},
+						{["name"] = "📈 Est. Gold / Min", ["value"] = "**+" .. FormatNumber(goldPerMin) .. "**\n(Peak: **+" .. FormatNumber(_G.HighestGoldPerMin) .. "**)", ["inline"] = true},
 						
 						{["name"] = "🪙 Current Gold", ["value"] = "**" .. FormatNumber(currentGold) .. "**", ["inline"] = true},
 						{["name"] = "💎 Total Session Yield", ["value"] = "**+" .. FormatNumber(goldGained) .. "**", ["inline"] = true},
-						{["name"] = "📊 Recent Action Shift", ["value"] = "**" .. _G.RecentDiffText .. "**", ["inline"] = true},
+						{["name"] = "🪙 Starting Gold", ["value"] = "**" .. FormatNumber(_G.InitialGold) .. "**", ["inline"] = true},
 						
-						{["name"] = "👑 Highest Session Gain", ["value"] = "**+" .. FormatNumber(_G.HighestGoldGained) .. "**", ["inline"] = true},
+						{["name"] = "🛡️ Last Resort Usage", ["value"] = "**" .. tostring(_G.LastResortCount) .. " times**", ["inline"] = true},
 						{["name"] = "🛡️ Failsafe Status", ["value"] = "**" .. failsafeStr .. "**", ["inline"] = true},
 						{["name"] = "\u{200B}", ["value"] = "\u{200B}", ["inline"] = true}
 					},
@@ -3757,23 +3748,31 @@ local function SlingshotKill(mobName, toggleKey)
 		while _G[toggleKey] do
 			local myChar = Player.Character
 			local targetMob = nil
+			local glitchedMob = nil -- New glitch catcher tag!
 			local mobsFolder = workspace:FindFirstChild("Mobs")
 
 			if mobsFolder and myChar and myChar:FindFirstChild("HumanoidRootPart") then
 				local myRoot = myChar.HumanoidRootPart
 				local shortestDist = math.huge
 				for _, v in pairs(mobsFolder:GetChildren()) do
-					if v.Name == mobName and v:FindFirstChild("HumanoidRootPart") and isEntityAlive(v) then
-						local dist = (v.HumanoidRootPart.Position - myRoot.Position).Magnitude
-						if dist < shortestDist then
-							shortestDist = dist
-							targetMob = v
+					if v.Name == mobName and v:FindFirstChild("HumanoidRootPart") then
+						if isEntityAlive(v) then
+							-- 1. Standard alive targeting check 
+							local dist = (v.HumanoidRootPart.Position - myRoot.Position).Magnitude
+							if dist < shortestDist then
+								shortestDist = dist
+								targetMob = v
+							end
+						else
+							-- 2. Wait... the mob's HP is <= 0 but the HRP exists physically!? Tag as a ghost.
+							glitchedMob = v
 						end
 					end
 				end
 			end
 
 			if targetMob then
+				-- >>> NORMAL ODM SLAUGHTER PATH
 				local cam = workspace.CurrentCamera
 				local camConn
 				if cam then
@@ -3816,6 +3815,49 @@ local function SlingshotKill(mobName, toggleKey)
 				if cam then cam.CameraType = Enum.CameraType.Custom end
 				
 				preventFling(safeCFrame)
+			
+			elseif glitchedMob then
+				-- >>> GLITCH/GHOST EXECUTION SEQUENCE
+				-- Triggered only when target is mathematically dead but refusing to erase.
+				local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+				local targetRoot = glitchedMob:FindFirstChild("HumanoidRootPart")
+				
+				if myRoot and targetRoot then
+					-- Stand securely near its hitbox directly.
+					myRoot.CFrame = targetRoot.CFrame * CFrame.new(0, 0, 3.5)
+					stopMomentum(myRoot)
+
+					-- Identify what weapons we have, prefer Titans or Lightning Axe!
+					local weaponNameTarget = "TitanBlades"
+					local weapon = myChar:FindFirstChild(weaponNameTarget) or myChar:FindFirstChild("LightningAxe") or myChar:FindFirstChildWhichIsA("Tool")
+					
+					-- Ensure we hold a weapon.
+					if not weapon then
+						local backpack = Player:FindFirstChild("Backpack")
+						weapon = backpack and (backpack:FindFirstChild(weaponNameTarget) or backpack:FindFirstChild("LightningAxe"))
+						local hum = myChar:FindFirstChild("Humanoid")
+						if hum and weapon then
+							hum:EquipTool(weapon)
+							task.wait(0.15)
+						else
+							-- Spoof hitting Hotkey (4) securely via Roblox pipeline as a massive fail-safe
+							VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Four, false, game)
+							task.wait(0.05)
+							VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Four, false, game)
+							task.wait(0.15)
+						end
+					end
+					
+					weapon = myChar:FindFirstChild(weaponNameTarget) or myChar:FindFirstChild("LightningAxe") or myChar:FindFirstChildWhichIsA("Tool")
+					if weapon and weapon:FindFirstChild("SwordScript") and weapon.SwordScript:FindFirstChild("Activate") then
+						pcall(function()
+							-- Force an execute hit with real world location argument included
+							weapon.SwordScript.Activate:FireServer(targetRoot.Position)
+						end)
+					end
+					task.wait(0.8) -- Important brief pause here to allow server Garbage Cleanup processing 
+				end
+
 			else
 				_G[toggleKey] = false
 			end
@@ -4080,6 +4122,8 @@ local function StartMasterAutoDungeon()
 		local state = "EVALUATE"
 		local currentRoom = nil
 		local roomState = "INIT"
+		local prevRoomState = "INIT" -- Watchdog component marker
+		local roomStateTimer = tick() -- Master stopwatch initialization 
 		local lastRoom = nil
 		local currentTween = nil
 		local lastTrapClear = 0
@@ -4088,6 +4132,13 @@ local function StartMasterAutoDungeon()
 		startExitCheckWatcher()
 
 		while _G.AutoDungeon do
+			
+			-- Track time shifting cleanly per state boundary phase transition update
+			if prevRoomState ~= roomState then
+				prevRoomState = roomState
+				roomStateTimer = tick()
+			end
+			
 			if tick() - lastTrapClear > 1 then
 				lastTrapClear = tick()
 				pcall(function()
@@ -4102,11 +4153,46 @@ local function StartMasterAutoDungeon()
 			local genMap = workspace:FindFirstChild("GeneratedMap")
 
 			if not genMap or not root then task.wait(0.5) continue end
+			
+			-- [START] THE "LAST RESORT" RECOVERY FAILSAFE SYSTEM MODULE
+			local elapsedInState = tick() - roomStateTimer
+			local triggerResort = false
+			
+			if (roomState == "OPEN_DOOR" or roomState == "OPEN_GATE" or roomState == "WAIT_SPAWN") and elapsedInState > 60 then
+				-- Triggers death if struggling against gates loading delays or interacting prompt failure
+				triggerResort = true
+				updateUIRunsStatus("Last Resort Triggered: Transition lock failed repeatedly.")
+			elseif roomState == "COMBAT" and elapsedInState > 120 then
+				-- Trigger deaths if Mob clears (Ex. Slingshot, Minions bugging invisibly under floor, boss healing stalling) fails infinitely
+				triggerResort = true
+				updateUIRunsStatus("Last Resort Triggered: Combat engagement stalled eternally.")
+			end
+			
+			if triggerResort then
+				_G.LastResortCount = (_G.LastResortCount or 0) + 1
+				saveConfig()
+				
+				sendWebhookNotification("LAST RESORT", "Map entity interaction fully failed processing timelines over acceptable tolerance limitations. Executing character kill script allowing sea respawn safely!")
+				Luna:Notification({Title = "Map Stuck Fail-safed", Content = "You got caught in loop. Attempting '0-Death Reset Recovery' immediately", Icon = "warning"})
+				
+				local targetHumHealthTracker = char:FindFirstChild("Humanoid")
+				if targetHumHealthTracker then
+					targetHumHealthTracker.Health = 0 -- Drops core tracking entirely killing player manually! 
+				end
+				
+				_G.AutoDungeon = false
+				
+				-- Aborting internal scripts gracefully ensures when sea teleport works background TeleportObserver naturally triggers your next full lobby rotation entrance autonomously natively again untouched perfectly! 
+				toggleNoclip(false)
+				resetWalkSpeed()
+				task.wait(2)
+				break
+			end
+			-- [END] LAST RESORT LOGIC COMPLETION PHASE BOUNDS!
 
 			if state == "EVALUATE" then
 				updateUIRunsStatus("Evaluating Active Floor...")
 				local activeFloor = getActiveFloor(genMap, root)
-				if activeFloor then
 					if activeFloor.Name == "Floor3" then
 						local arena = activeFloor:FindFirstChild("KingsRuinsArena")
 						if arena then
@@ -5807,6 +5893,32 @@ local webhookInput = secWebhook:CreateInput({
 
 -- Update textbox visual state with the stored value on launch
 webhookInput:Set({ CurrentValue = _G.DiscordWebhookURL })
+
+-- Insert under your existing webhook integration setup box (Around Line 2955)
+secWebhook:CreateButton({
+	Name = "Reset Activity Data",
+	Description = "Wipes runtime cache calculations & enforces a fresh embed generation.",
+	Callback = function()
+		-- Restore trackers to 0 and establish baseline at that exact execution time.
+		_G.StartupTime = os.time()
+		
+		local currentGold = 0
+		if Player:FindFirstChild("Data") and Player.Data:FindFirstChild("Gold") then
+			currentGold = Player.Data.Gold.Value
+		end
+		
+		_G.InitialGold = currentGold
+		_G.HighestGoldPerMin = 0
+		_G.LastResortCount = 0
+		
+		_G.DiscordMessageId = nil -- Delete payload tracking so a completely NEW dashboard message appears!
+		
+		saveConfig()
+		Luna:Notification({Title = "Activity Cache Erased", Content = "Stats safely initialized from origin. Submitting active parameters now...", Icon = "autorenew"})
+		
+		sendWebhookNotification("REBOOT", "Runtime analytics data strictly refreshed back to starting points natively.")
+	end
+})
 
 local secDestruct = tabMisc:CreateSection("Self-Destruct")
 secDestruct:CreateButton({
