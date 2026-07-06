@@ -4150,41 +4150,26 @@ local function StartMasterAutoDungeon()
 						end
 						task.wait(1)
 					else
-						-- Start at a safe distance (7 studs)
-						local flatDir = (root.Position - door.Position)
-						flatDir = Vector3.new(flatDir.X, 0, flatDir.Z).Unit
-						if flatDir.Magnitude ~= flatDir.Magnitude then flatDir = Vector3.new(1,0,0) end
-						
-						local safePos = door.Position + (flatDir * 7)
-						preventFling(CFrame.lookAt(safePos, door.Position))
-						_G.DoorRetryDistance = 7 -- Initialize tracking variable
-						task.wait(0.5)
-						roomState = "OPEN_DOOR"
-					end
-
-				elseif roomState == "OPEN_DOOR" then
-					updateUIRunsStatus("Opening gate [Dist: " .. math.round(_G.DoorRetryDistance or 7) .. "]")
-					
-					if prompt and prompt.Enabled then
-						-- Fire the prompt
-						prompt.HoldDuration = 0
-						pcall(function() fireproximityprompt(prompt) end)
-						task.wait(0.7) -- Give the server time to process
-						
-						-- Check if it failed to open
-						if prompt.Enabled then
-							-- Decrease distance by 1.5 studs every failure until we are practically touching it (min 0.5)
-							_G.DoorRetryDistance = math.max((_G.DoorRetryDistance or 7) - 1.5, 0.5)
-							
+						if (door.Position - root.Position).Magnitude > 7.5 then
 							local flatDir = (root.Position - door.Position)
 							flatDir = Vector3.new(flatDir.X, 0, flatDir.Z).Unit
 							if flatDir.Magnitude ~= flatDir.Magnitude then flatDir = Vector3.new(1,0,0) end
 							
-							local closerPos = door.Position + (flatDir * _G.DoorRetryDistance)
-							preventFling(CFrame.lookAt(closerPos, door.Position))
+							local safePos = door.Position + (flatDir * 6.5)
+							preventFling(CFrame.lookAt(safePos, door.Position))
+							task.wait(1)
+						else
+							roomState = "OPEN_DOOR"
 						end
+					end
+
+				elseif roomState == "OPEN_DOOR" then
+					updateUIRunsStatus("Opening room gate...")
+					if prompt and prompt.Enabled then
+						prompt.HoldDuration = 0
+						pcall(function() fireproximityprompt(prompt) end)
+						task.wait(1)
 					elseif prompt and not prompt.Enabled then
-						_G.DoorRetryDistance = nil -- Reset for next room
 						roomState = "WALK_IN"
 					end
 
@@ -4244,21 +4229,29 @@ local function StartMasterAutoDungeon()
 						end
 						task.wait(1)
 					else
-						if (door.Position - root.Position).Magnitude > 15 then
-							preventFling(door.CFrame * CFrame.new(0, 0, 8))
-							task.wait(1)
-						else
-							roomState = "OPEN_GATE"
-						end
+						-- Move into initial position and prime retry tracker
+						preventFling(door.CFrame * CFrame.new(0, 0, 8))
+						_G.DoorRetryDistance = 8
+						task.wait(1)
+						roomState = "OPEN_GATE"
 					end
 				
 				elseif roomState == "OPEN_GATE" then
-					updateUIRunsStatus("Opening floor exit portal...")
+					updateUIRunsStatus("Opening floor exit portal [Dist: " .. math.round(_G.DoorRetryDistance or 8) .. "]")
+					
 					if prompt and prompt.Enabled then
+						-- Attempt prompt fire
 						prompt.HoldDuration = 0
 						pcall(function() fireproximityprompt(prompt) end)
-						task.wait(1)
+						task.wait(0.7)
+						
+						-- If prompt failed to process/open, move physically closer to the door
+						if prompt.Enabled then
+							_G.DoorRetryDistance = math.max((_G.DoorRetryDistance or 8) - 1.5, 0.5)
+							preventFling(door.CFrame * CFrame.new(0, 0, _G.DoorRetryDistance))
+						end
 					elseif prompt and not prompt.Enabled then
+						_G.DoorRetryDistance = nil
 						roomState = "WALK_THROUGH"
 					end
 
@@ -4298,21 +4291,26 @@ local function StartMasterAutoDungeon()
 						end
 						task.wait(1)
 					else
-						if (door.Position - root.Position).Magnitude > 15 then
-							preventFling(door.CFrame * CFrame.new(0, 0, 10))
-							task.wait(1)
-						else
-							roomState = "OPEN_DOOR"
-						end
+						preventFling(door.CFrame * CFrame.new(0, 0, 10))
+						_G.DoorRetryDistance = 10
+						task.wait(1)
+						roomState = "OPEN_DOOR"
 					end
 
 				elseif roomState == "OPEN_DOOR" then
-					updateUIRunsStatus("Opening Boss Chamber...")
+					updateUIRunsStatus("Opening Boss Chamber [Dist: " .. math.round(_G.DoorRetryDistance or 10) .. "]")
+					
 					if prompt and prompt.Enabled then
 						prompt.HoldDuration = 0
 						pcall(function() fireproximityprompt(prompt) end)
-						task.wait(1)
+						task.wait(0.7)
+						
+						if prompt.Enabled then
+							_G.DoorRetryDistance = math.max((_G.DoorRetryDistance or 10) - 1.5, 0.5)
+							preventFling(door.CFrame * CFrame.new(0, 0, _G.DoorRetryDistance))
+						end
 					elseif prompt and not prompt.Enabled then
+						_G.DoorRetryDistance = nil
 						spawnTimer = tick()
 						roomState = "WAIT_SPAWN"
 					end
