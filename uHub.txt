@@ -4858,13 +4858,6 @@ local function runKingsRuinsObserver()
 
 				local function forceEvacuate()
 					executeKingsRuinsLeave()
-					-- Physics Backup: Physically teleport the player ~70 studs backwards away from the pad to force them out of the list if the button fails!
-					pcall(function()
-						local hrp = Player.Character.HumanoidRootPart
-						local offsetDir = (hrp.Position - centerPos).Unit
-						if offsetDir.Magnitude ~= offsetDir.Magnitude or offsetDir.Magnitude == 0 then offsetDir = Vector3.new(1,0,0) end
-						hrp.CFrame = CFrame.new(centerPos + (offsetDir * 70))
-					end)
 				end
 
 				if amInLobby then
