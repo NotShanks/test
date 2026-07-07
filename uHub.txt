@@ -4314,7 +4314,6 @@ local function StartMasterAutoDungeon()
 
 				elseif roomState == "WALK_IN" then
 					updateUIRunsStatus("Advancing into room...")
-					-- EXACT ORIGINAL LOGIC: We ONLY change states when the shutting audio triggers!
 					local closeSound = currentRoom:FindFirstChild("Doors") and currentRoom.Doors:FindFirstChild("WallBlock") and currentRoom.Doors.WallBlock:FindFirstChild("Close")
 					
 					if closeSound and closeSound.Playing then
@@ -4324,42 +4323,20 @@ local function StartMasterAutoDungeon()
 						roomState = "WAIT_CLOSE"
 					else
 						if not currentTween or currentTween.PlaybackState ~= Enum.PlaybackState.Playing then
-							-- INSTEAD OF FurthestPart or broken pivots, we get the Door's CFrame
-							local doorsModel = currentRoom:FindFirstChild("Doors")
-							local doorObj = doorsModel and doorsModel:FindFirstChild("DoorMain")
+							local furthestPart = getFurthestPart(currentRoom, root.Position)
+							local targetPos = furthestPart and furthestPart.Position or currentRoom:GetPivot().Position
 							
-							local targetPos = root.Position
-							if doorObj then
-								-- Calculate exactly 40 studs geometrically behind the doorway
-								local localP = doorObj.CFrame:PointToObjectSpace(root.Position)
-								if math.abs(localP.Z) > math.abs(localP.X) then
-									targetPos = (doorObj.CFrame * CFrame.new(0, 0, -math.sign(localP.Z) * 40)).Position
-								else
-									targetPos = (doorObj.CFrame * CFrame.new(-math.sign(localP.X) * 40, 0, 0)).Position
-								end
-							end
+							targetPos = Vector3.new(targetPos.X, currentRoom:GetPivot().Position.Y + 3, targetPos.Z)
 							
-							-- Hold our current exact altitude to avoid snapping into floors
-							targetPos = Vector3.new(targetPos.X, root.Position.Y, targetPos.Z)
+							toggleNoclip(true)
 							local dist = (root.Position - targetPos).Magnitude
-							
-							-- If we aren't standing there yet, tween over cleanly
-							if dist > 5 then
-								toggleNoclip(true)
-								local tInfo = TweenInfo.new(dist / 40, Enum.EasingStyle.Linear)
-								currentTween = TweenService:Create(root, tInfo, {CFrame = CFrame.lookAt(targetPos, targetPos + (targetPos - root.Position).Unit)})
-								currentTween:Play()
-							else
-								-- If we REACH the inside and the sound STILL hasn't played, we STOP pushing infinitely 
-								-- and just STAND PERFECTLY STILL while we patiently wait!
-								stopMomentum(root)
-								toggleNoclip(false)
-							end
+							local tInfo = TweenInfo.new(dist / 200, Enum.EasingStyle.Linear)
+							currentTween = TweenService:Create(root, tInfo, {CFrame = CFrame.new(targetPos)})
+							currentTween:Play()
 						end
 					end
 
 				elseif roomState == "WAIT_CLOSE" then
-					-- LITERALLY YOUR EXACT ORIGINAL CODE! Flawless state lock.
 					updateUIRunsStatus("Waiting for entry gate to lock...")
 					local closeSound = currentRoom:FindFirstChild("Doors") and currentRoom.Doors:FindFirstChild("WallBlock") and currentRoom.Doors.WallBlock:FindFirstChild("Close")
 					if closeSound and not closeSound.Playing then
