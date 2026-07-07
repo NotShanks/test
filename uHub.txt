@@ -4317,23 +4317,24 @@ local function StartMasterAutoDungeon()
 					local closeSound = currentRoom:FindFirstChild("Doors") and currentRoom.Doors:FindFirstChild("WallBlock") and currentRoom.Doors.WallBlock:FindFirstChild("Close")
 					
 					if closeSound and closeSound.Playing then
-						if currentTween then currentTween:Cancel(); currentTween = nil end
+						CancelSmoothTween()
 						toggleNoclip(false)
 						preventFling() 
 						roomState = "WAIT_CLOSE"
 					else
-						if not currentTween or currentTween.PlaybackState ~= Enum.PlaybackState.Playing then
-							local furthestPart = getFurthestPart(currentRoom, root.Position)
-							local targetPos = furthestPart and furthestPart.Position or currentRoom:GetPivot().Position
-							
-							targetPos = Vector3.new(targetPos.X, currentRoom:GetPivot().Position.Y + 3, targetPos.Z)
-							
-							toggleNoclip(true)
-							local dist = (root.Position - targetPos).Magnitude
-							local tInfo = TweenInfo.new(dist / 200, Enum.EasingStyle.Linear)
-							currentTween = TweenService:Create(root, tInfo, {CFrame = CFrame.new(targetPos)})
-							currentTween:Play()
-						end
+						local furthestPart = getFurthestPart(currentRoom, root.Position)
+						local targetPos = furthestPart and furthestPart.Position or currentRoom:GetPivot().Position
+						targetPos = Vector3.new(targetPos.X, currentRoom:GetPivot().Position.Y + 3, targetPos.Z)
+						
+						-- Use the robust SmoothTween function instead of raw TweenService to satisfy anti-cheat parameters
+						task.spawn(function()
+							local success = SmoothTween(CFrame.new(targetPos), 120, function() 
+								return _G.AutoDungeon and roomState == "WALK_IN" 
+							end)
+							if success then
+								roomState = "WAIT_CLOSE"
+							end
+						end)
 					end
 
 				elseif roomState == "WAIT_CLOSE" then
@@ -4828,11 +4829,11 @@ local function runKingsRuinsObserver()
 						if isPlayerAuthorized(otherPlayer.Name) then
 							-- ALTS TIE-BREAKER LOGIC
 							if table.find(lobbyPlayers, otherPlayer.Name) then
-								-- Alt is ALREADY staging a run. Treat as hard block so we wait for them to finish.
+								-- The alt is actively in the queue. We must yield.
 								playerInZone1 = true 
 								playerInZone2 = true
-							elseif otherPlayer.UserId < Player.UserId and distance <= 350 then
-								-- Alt has mathematical priority and is in our vicinity. Yield entirely.
+							elseif otherPlayer.UserId < Player.UserId and table.find(lobbyPlayers, otherPlayer.Name) then
+								-- Only yield to the lower UserID alt if they are actually in the lobby list
 								playerInZone1 = true
 								playerInZone2 = true
 							end
