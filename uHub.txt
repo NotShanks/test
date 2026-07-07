@@ -4240,7 +4240,14 @@ local function StartMasterAutoDungeon()
 				if comp and comp.Value == true then
 					_G.SlingshotStatue = false
 					if currentTween then currentTween:Cancel(); currentTween = nil end
-					preventFling(currentRoom:GetPivot() + Vector3.new(0,3,0))
+					
+					updateUIRunsStatus("Room Complete! Synchronizing...")
+					preventFling(currentRoom:GetPivot() + Vector3.new(0, 3, 0))
+					
+					-- STABILIZATION PAUSE: Lets the server register that you have cleared the room
+					-- and are resting at its center before trying to jump to the next room.
+					task.wait(0.8) 
+					
 					state = "EVALUATE"
 					continue
 				end
@@ -4257,8 +4264,8 @@ local function StartMasterAutoDungeon()
 				end
 
 				if roomState == "INIT" then
-					updateUIRunsStatus("Moving to event room gate...")
-					toggleNoclip(true) -- ENABLE NOCLIP HERE to prevent door collisions from flinging you
+					updateUIRunsStatus("Transitioning to next gate...")
+					toggleNoclip(true) -- Keep noclip on to avoid physics glitched flings
 					
 					if not door then
 						if doorsModel and doorsModel:GetPivot() then
@@ -4278,9 +4285,16 @@ local function StartMasterAutoDungeon()
 							safePos = doorCF * Vector3.new(math.sign(localPos.X) * 8, 0, 0)
 						end
 
+						-- Teleport to the safe door offset
 						preventFling(CFrame.lookAt(safePos, door.Position))
+						
+						-- SYNCHRONIZATION: Anchor briefly to force the server's replication
+						-- to accept your new position before interacting with the prompt.
+						root.Anchored = true
+						task.wait(0.4) 
+						root.Anchored = false
+						
 						_G.DoorRetryDistance = 8 
-						task.wait(0.3) -- Brief pause to let physics and server settle
 						roomState = "OPEN_DOOR"
 					end
 
