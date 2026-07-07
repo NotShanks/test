@@ -4258,6 +4258,8 @@ local function StartMasterAutoDungeon()
 
 				if roomState == "INIT" then
 					updateUIRunsStatus("Moving to event room gate...")
+					toggleNoclip(true) -- ENABLE NOCLIP HERE to prevent door collisions from flinging you
+					
 					if not door then
 						if doorsModel and doorsModel:GetPivot() then
 							preventFling(doorsModel:GetPivot() + Vector3.new(0, 5, 0))
@@ -4266,7 +4268,6 @@ local function StartMasterAutoDungeon()
 						end
 						task.wait(1)
 					else
-						-- PERFECT CENTERING: Translates the door's 3D axis locally, eliminating side/diagonal drifts.
 						local doorCF = door.CFrame
 						local localPos = doorCF:PointToObjectSpace(root.Position)
 						local safePos
@@ -4279,12 +4280,13 @@ local function StartMasterAutoDungeon()
 
 						preventFling(CFrame.lookAt(safePos, door.Position))
 						_G.DoorRetryDistance = 8 
-						task.wait(0.5)
+						task.wait(0.3) -- Brief pause to let physics and server settle
 						roomState = "OPEN_DOOR"
 					end
 
 				elseif roomState == "OPEN_DOOR" then
 					updateUIRunsStatus("Opening gate [Dist: " .. math.round(_G.DoorRetryDistance or 8) .. "]")
+					toggleNoclip(true) -- Keep noclip active while the door is transitioning
 					
 					if prompt and prompt.Enabled then
 						prompt.HoldDuration = 0
@@ -4294,7 +4296,6 @@ local function StartMasterAutoDungeon()
 						if prompt.Enabled then
 							_G.DoorRetryDistance = math.max((_G.DoorRetryDistance or 8) - 1.5, 0.5)
 							
-							-- RE-SNAPPING TO DEAD CENTER on retry:
 							local doorCF = door.CFrame
 							local localPos = doorCF:PointToObjectSpace(root.Position)
 							local closerPos
