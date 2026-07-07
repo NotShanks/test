@@ -4323,20 +4323,25 @@ local function StartMasterAutoDungeon()
 						preventFling() 
 						roomState = "WAIT_CLOSE"
 					else
-						-- FIX: Replaced "FurthestPart" pathing with pure Dead Center routing
+						-- Simply walk STRAIGHT AHEAD 40 studs into the room from wherever the door is!
 						if not currentTween or currentTween.PlaybackState ~= Enum.PlaybackState.Playing then
-							-- Gets the direct center of the Event Room 
-							local targetPos = currentRoom:GetPivot().Position
-							
-							-- Forces your altitude (Y-axis) to stay completely level so you don't drop or sink!
-							targetPos = Vector3.new(targetPos.X, root.Position.Y, targetPos.Z)
-							
 							toggleNoclip(true)
-							local dist = (root.Position - targetPos).Magnitude
-							local tInfo = TweenInfo.new(dist / 70, Enum.EasingStyle.Linear)
 							
-							-- Forces character to face forward correctly while tweening
-							currentTween = TweenService:Create(root, tInfo, {CFrame = CFrame.lookAt(targetPos, targetPos + (targetPos - root.Position).Unit)})
+							-- Get direction character is facing, flattened perfectly to the ground so we don't float or sink!
+							local lookDir = root.CFrame.LookVector
+							local flatForward = Vector3.new(lookDir.X, 0, lookDir.Z).Unit
+							
+							-- If the math fails randomly, fall back
+							if flatForward.Magnitude ~= flatForward.Magnitude then 
+								flatForward = Vector3.new(1, 0, 0)
+							end
+							
+							local targetPos = root.Position + (flatForward * 40)
+							local dist = (root.Position - targetPos).Magnitude
+							local tInfo = TweenInfo.new(dist / 40, Enum.EasingStyle.Linear)
+							
+							-- Forces character to face completely forward correctly while sliding in
+							currentTween = TweenService:Create(root, tInfo, {CFrame = CFrame.lookAt(targetPos, targetPos + flatForward)})
 							currentTween:Play()
 						end
 					end
