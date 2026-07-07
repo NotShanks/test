@@ -4316,35 +4316,43 @@ local function StartMasterAutoDungeon()
 					updateUIRunsStatus("Advancing into room...")
 					local closeSound = currentRoom:FindFirstChild("Doors") and currentRoom.Doors:FindFirstChild("WallBlock") and currentRoom.Doors.WallBlock:FindFirstChild("Close")
 					
+					-- Trigger 1: We successfully triggered the door closing sound while walking
 					if closeSound and closeSound.Playing then
 						if currentTween then currentTween:Cancel(); currentTween = nil end
 						toggleNoclip(false)
 						preventFling() 
 						roomState = "WAIT_CLOSE"
 					else
-						if not currentTween or currentTween.PlaybackState ~= Enum.PlaybackState.Playing then
+						-- Check if the tween hasn't been created yet
+						if not currentTween then
 							toggleNoclip(true)
 							
 							local targetPos = currentRoom:GetPivot().Position
 							if door then
-								-- Map the exact door side. Pushes character mathematically ~45 studs inwards into the room space completely avoiding wall decor debris!
+								-- Map the exact door side JUST ONCE to prevent back-and-forth reversing
 								local localPos = door.CFrame:PointToObjectSpace(root.Position)
+								
+								-- Pushed forward exactly 32 studs (safe for small & large rooms without wall bumping)
 								if math.abs(localPos.Z) > math.abs(localPos.X) then
-									targetPos = (door.CFrame * CFrame.new(0, 0, -math.sign(localPos.Z) * 45)).Position
+									targetPos = (door.CFrame * CFrame.new(0, 0, -math.sign(localPos.Z) * 32)).Position
 								else
-									targetPos = (door.CFrame * CFrame.new(-math.sign(localPos.X) * 45, 0, 0)).Position
+									targetPos = (door.CFrame * CFrame.new(-math.sign(localPos.X) * 32, 0, 0)).Position
 								end
 							end
 							
-							-- Match current standing Altitude to perfectly stop glitch drops!
 							targetPos = Vector3.new(targetPos.X, root.Position.Y, targetPos.Z)
-							
 							local dist = (root.Position - targetPos).Magnitude
-							local tInfo = TweenInfo.new(dist / 70, Enum.EasingStyle.Linear)
+							local tInfo = TweenInfo.new(dist / 50, Enum.EasingStyle.Linear)
 							
-							-- Force camera smoothing to follow target properly using lookAt instead of empty orientations
 							currentTween = TweenService:Create(root, tInfo, {CFrame = CFrame.lookAt(targetPos, targetPos + (targetPos - root.Position).Unit)})
 							currentTween:Play()
+							
+						elseif currentTween.PlaybackState == Enum.PlaybackState.Completed then
+							-- Trigger 2: The Tween cleanly completed the 32 studs, so stop & stand perfectly still.
+							currentTween = nil
+							toggleNoclip(false)
+							stopMomentum(root)
+							roomState = "WAIT_CLOSE"
 						end
 					end
 
