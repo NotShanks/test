@@ -4314,24 +4314,23 @@ local function StartMasterAutoDungeon()
 
 				elseif roomState == "WALK_IN" then
 					updateUIRunsStatus("Advancing into room...")
-					-- Retain YOUR original strict audio check to completely stop early-combat!
-					local closeSound = currentRoom:FindFirstChild("Doors") and currentRoom.Doors:FindFirstChild("WallBlock") and currentRoom.Doors.WallBlock:FindFirstChild("Close")
+					local doorsModel = currentRoom:FindFirstChild("Doors")
+					local wallBlock = doorsModel and doorsModel:FindFirstChild("WallBlock")
 					
-					if closeSound and closeSound.Playing then
+					-- Trigger 1: The room wall spawned behind us mid-tween! (Map trapped us)
+					if wallBlock then
 						if currentTween then currentTween:Cancel(); currentTween = nil end
 						toggleNoclip(false)
 						preventFling() 
 						roomState = "WAIT_CLOSE"
 					else
-						-- FIX: We only want to execute the forward 40-stud tween EXACTLY ONCE.
+						-- We only execute the forward 40-stud tween EXACTLY ONCE
 						if not currentTween then
 							toggleNoclip(true)
 							
-							-- Get direction character is facing, flattened perfectly to the ground so we don't float or sink!
 							local lookDir = root.CFrame.LookVector
 							local flatForward = Vector3.new(lookDir.X, 0, lookDir.Z).Unit
 							
-							-- If the math fails randomly, fall back
 							if flatForward.Magnitude ~= flatForward.Magnitude then 
 								flatForward = Vector3.new(1, 0, 0)
 							end
@@ -4340,17 +4339,15 @@ local function StartMasterAutoDungeon()
 							local dist = (root.Position - targetPos).Magnitude
 							local tInfo = TweenInfo.new(dist / 40, Enum.EasingStyle.Linear)
 							
-							-- Forces character to face completely forward correctly while sliding in
 							currentTween = TweenService:Create(root, tInfo, {CFrame = CFrame.lookAt(targetPos, targetPos + flatForward)})
 							currentTween:Play()
 						
-						-- TRIGGER: The tween cleanly reached the end of its 40 studs!
+						-- Trigger 2: The tween reached 40 studs cleanly, but wall hasn't spawned yet
 						elseif currentTween.PlaybackState == Enum.PlaybackState.Completed then
-							-- Null out the Tween permanently so we never infinitely fire off another one
 							currentTween = nil
 							stopMomentum(root)
 							toggleNoclip(false)
-							-- Move automatically to WAIT_CLOSE. (Fixes getting stuck on laggy gate-drop sounds)
+							-- Move to WAIT_CLOSE to patiently stand there until it loads
 							roomState = "WAIT_CLOSE"
 						end
 					end
@@ -4358,15 +4355,32 @@ local function StartMasterAutoDungeon()
 				elseif roomState == "WAIT_CLOSE" then
 					updateUIRunsStatus("Waiting for entry gate to lock...")
 					
-					-- Ensure we sit still physically while the door shuts behind us
+					-- Ensure we sit still physically
 					stopMomentum(root)
 					
-					-- Your exact original WAIT_CLOSE code!
-					local closeSound = currentRoom:FindFirstChild("Doors") and currentRoom.Doors:FindFirstChild("WallBlock") and currentRoom.Doors.WallBlock:FindFirstChild("Close")
-					if closeSound and not closeSound.Playing then
-						roomState = "COMBAT"
-					elseif not closeSound then
-						roomState = "COMBAT"
+					local doorsModel = currentRoom:FindFirstChild("Doors")
+					local wallBlock = doorsModel and doorsModel:FindFirstChild("WallBlock")
+					local closeSound = wallBlock and wallBlock:FindFirstChild("Close")
+					
+					-- Step 1: Wait for the trap-door part to physically generate into existence
+					if wallBlock then
+						-- Step 2: Ensure the heavy sound finishes 
+						if closeSound then
+							if not closeSound.Playing then
+								roomState = "COMBAT"
+							end
+						else
+							-- Map bug (wall generated but has no audio element), bypass instantly 
+							roomState = "COMBAT"
+						end
+					else
+						-- The wall hasn't spawned yet because the Server is lagging! DO NOTHING & WAIT.
+						-- Soft fail-safe: If 10 whole seconds pass standing perfectly still and it NEVER spawned,
+						-- assume it bugged out completely and force the start so we don't trap forever.
+						local elapsed = tick() - roomStateTimer
+						if elapsed > 10 then
+							roomState = "COMBAT"
+						end
 					end
 
 				elseif roomState == "COMBAT" then
