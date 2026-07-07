@@ -4313,51 +4313,45 @@ local function StartMasterAutoDungeon()
 					end
 
 				elseif roomState == "WALK_IN" then
-					updateUIRunsStatus("Advancing to trigger pad...")
+					updateUIRunsStatus("Advancing into room...")
+					-- Retain YOUR original strict audio check to completely stop early-combat!
+					local closeSound = currentRoom:FindFirstChild("Doors") and currentRoom.Doors:FindFirstChild("WallBlock") and currentRoom.Doors.WallBlock:FindFirstChild("Close")
 					
-					local doorsModel = currentRoom:FindFirstChild("Doors")
-					local wallBlock = doorsModel and doorsModel:FindFirstChild("WallBlock")
-					
-					-- TRIP-WIRE: The exact moment the map triggers the seal wall, we STOP!
-					if wallBlock then
+					if closeSound and closeSound.Playing then
 						if currentTween then currentTween:Cancel(); currentTween = nil end
 						toggleNoclip(false)
-						stopMomentum(root)
+						preventFling() 
 						roomState = "WAIT_CLOSE"
 					else
-						-- Keep walking towards the dead geometric center of the event room on flat ground
-						if not currentTween or currentTween.PlaybackState == Enum.PlaybackState.Completed then
+						-- FIX: Replaced "FurthestPart" pathing with pure Dead Center routing
+						if not currentTween or currentTween.PlaybackState ~= Enum.PlaybackState.Playing then
+							-- Gets the direct center of the Event Room 
+							local targetPos = currentRoom:GetPivot().Position
+							
+							-- Forces your altitude (Y-axis) to stay completely level so you don't drop or sink!
+							targetPos = Vector3.new(targetPos.X, root.Position.Y, targetPos.Z)
+							
 							toggleNoclip(true)
-							
-							local centerPos = currentRoom:GetPivot().Position
-							-- Lock altitude to player's feet so we walk perfectly level, ignoring underground pivots
-							local targetPos = Vector3.new(centerPos.X, root.Position.Y, centerPos.Z) 
-							
 							local dist = (root.Position - targetPos).Magnitude
-							local tInfo = TweenInfo.new(dist / 40, Enum.EasingStyle.Linear) -- Moved slightly slower (40 sps) so we don't outrun the trip-wire check
+							local tInfo = TweenInfo.new(dist / 70, Enum.EasingStyle.Linear)
 							
+							-- Forces character to face forward correctly while tweening
 							currentTween = TweenService:Create(root, tInfo, {CFrame = CFrame.lookAt(targetPos, targetPos + (targetPos - root.Position).Unit)})
 							currentTween:Play()
 						end
 					end
 
 				elseif roomState == "WAIT_CLOSE" then
-					updateUIRunsStatus("Waiting for entrance gate to seal...")
-					local doorsModel = currentRoom:FindFirstChild("Doors")
-					local closeSound = doorsModel and doorsModel:FindFirstChild("WallBlock") and doorsModel.WallBlock:FindFirstChild("Close")
+					updateUIRunsStatus("Waiting for entry gate to lock...")
 					
-					-- Ensure we sit still physically while the door shuts
+					-- Ensure we sit still physically while the door shuts behind us
 					stopMomentum(root)
-					preventFling()
 					
-					-- Do not transition to Combat until the loud sealing sound finishes completely
-					if closeSound and closeSound.Playing then
-						return -- Stay right here
-					elseif not closeSound then
-						-- Sometimes the sound doesn't load for clients, give a static 2 second fail-safe before starting combat
-						task.wait(2)
+					-- Your exact original WAIT_CLOSE code!
+					local closeSound = currentRoom:FindFirstChild("Doors") and currentRoom.Doors:FindFirstChild("WallBlock") and currentRoom.Doors.WallBlock:FindFirstChild("Close")
+					if closeSound and not closeSound.Playing then
 						roomState = "COMBAT"
-					else
+					elseif not closeSound then
 						roomState = "COMBAT"
 					end
 
