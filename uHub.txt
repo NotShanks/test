@@ -4842,15 +4842,13 @@ local function runKingsRuinsObserver()
 						local distance = (otherHRP.Position - centerPos).Magnitude
 						
 						if isPlayerAuthorized(otherPlayer.Name) then
-							-- ALTS TIE-BREAKER LOGIC
+							-- ALTS TIE-BREAKER LOGIC:
+							-- Only yield if the other alt is in the queue AND has a lower UserID.
 							if table.find(lobbyPlayers, otherPlayer.Name) then
-								-- The alt is actively in the queue. We must yield.
-								playerInZone1 = true 
-								playerInZone2 = true
-							elseif otherPlayer.UserId < Player.UserId and table.find(lobbyPlayers, otherPlayer.Name) then
-								-- Only yield to the lower UserID alt if they are actually in the lobby list
-								playerInZone1 = true
-								playerInZone2 = true
+								if otherPlayer.UserId < Player.UserId then
+									playerInZone1 = true
+									playerInZone2 = true
+								end
 							end
 						else
 							-- Random Stranger Threat Tracking
