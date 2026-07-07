@@ -4313,55 +4313,51 @@ local function StartMasterAutoDungeon()
 					end
 
 				elseif roomState == "WALK_IN" then
-					updateUIRunsStatus("Advancing into room...")
-					local closeSound = currentRoom:FindFirstChild("Doors") and currentRoom.Doors:FindFirstChild("WallBlock") and currentRoom.Doors.WallBlock:FindFirstChild("Close")
+					updateUIRunsStatus("Advancing to trigger pad...")
 					
-					-- Trigger 1: We successfully triggered the door closing sound while walking
-					if closeSound and closeSound.Playing then
+					local doorsModel = currentRoom:FindFirstChild("Doors")
+					local wallBlock = doorsModel and doorsModel:FindFirstChild("WallBlock")
+					
+					-- TRIP-WIRE: The exact moment the map triggers the seal wall, we STOP!
+					if wallBlock then
 						if currentTween then currentTween:Cancel(); currentTween = nil end
 						toggleNoclip(false)
-						preventFling() 
+						stopMomentum(root)
 						roomState = "WAIT_CLOSE"
 					else
-						-- Check if the tween hasn't been created yet
-						if not currentTween then
+						-- Keep walking towards the dead geometric center of the event room on flat ground
+						if not currentTween or currentTween.PlaybackState == Enum.PlaybackState.Completed then
 							toggleNoclip(true)
 							
-							local targetPos = currentRoom:GetPivot().Position
-							if door then
-								-- Map the exact door side JUST ONCE to prevent back-and-forth reversing
-								local localPos = door.CFrame:PointToObjectSpace(root.Position)
-								
-								-- Pushed forward exactly 32 studs (safe for small & large rooms without wall bumping)
-								if math.abs(localPos.Z) > math.abs(localPos.X) then
-									targetPos = (door.CFrame * CFrame.new(0, 0, -math.sign(localPos.Z) * 32)).Position
-								else
-									targetPos = (door.CFrame * CFrame.new(-math.sign(localPos.X) * 32, 0, 0)).Position
-								end
-							end
+							local centerPos = currentRoom:GetPivot().Position
+							-- Lock altitude to player's feet so we walk perfectly level, ignoring underground pivots
+							local targetPos = Vector3.new(centerPos.X, root.Position.Y, centerPos.Z) 
 							
-							targetPos = Vector3.new(targetPos.X, root.Position.Y, targetPos.Z)
 							local dist = (root.Position - targetPos).Magnitude
-							local tInfo = TweenInfo.new(dist / 50, Enum.EasingStyle.Linear)
+							local tInfo = TweenInfo.new(dist / 40, Enum.EasingStyle.Linear) -- Moved slightly slower (40 sps) so we don't outrun the trip-wire check
 							
 							currentTween = TweenService:Create(root, tInfo, {CFrame = CFrame.lookAt(targetPos, targetPos + (targetPos - root.Position).Unit)})
 							currentTween:Play()
-							
-						elseif currentTween.PlaybackState == Enum.PlaybackState.Completed then
-							-- Trigger 2: The Tween cleanly completed the 32 studs, so stop & stand perfectly still.
-							currentTween = nil
-							toggleNoclip(false)
-							stopMomentum(root)
-							roomState = "WAIT_CLOSE"
 						end
 					end
 
 				elseif roomState == "WAIT_CLOSE" then
-					updateUIRunsStatus("Waiting for entry gate to lock...")
-					local closeSound = currentRoom:FindFirstChild("Doors") and currentRoom.Doors:FindFirstChild("WallBlock") and currentRoom.Doors.WallBlock:FindFirstChild("Close")
-					if closeSound and not closeSound.Playing then
-						roomState = "COMBAT"
+					updateUIRunsStatus("Waiting for entrance gate to seal...")
+					local doorsModel = currentRoom:FindFirstChild("Doors")
+					local closeSound = doorsModel and doorsModel:FindFirstChild("WallBlock") and doorsModel.WallBlock:FindFirstChild("Close")
+					
+					-- Ensure we sit still physically while the door shuts
+					stopMomentum(root)
+					preventFling()
+					
+					-- Do not transition to Combat until the loud sealing sound finishes completely
+					if closeSound and closeSound.Playing then
+						return -- Stay right here
 					elseif not closeSound then
+						-- Sometimes the sound doesn't load for clients, give a static 2 second fail-safe before starting combat
+						task.wait(2)
+						roomState = "COMBAT"
+					else
 						roomState = "COMBAT"
 					end
 
