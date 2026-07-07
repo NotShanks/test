@@ -4323,8 +4323,8 @@ local function StartMasterAutoDungeon()
 						preventFling() 
 						roomState = "WAIT_CLOSE"
 					else
-						-- Simply walk STRAIGHT AHEAD 40 studs into the room from wherever the door is!
-						if not currentTween or currentTween.PlaybackState ~= Enum.PlaybackState.Playing then
+						-- FIX: We only want to execute the forward 40-stud tween EXACTLY ONCE.
+						if not currentTween then
 							toggleNoclip(true)
 							
 							-- Get direction character is facing, flattened perfectly to the ground so we don't float or sink!
@@ -4343,6 +4343,15 @@ local function StartMasterAutoDungeon()
 							-- Forces character to face completely forward correctly while sliding in
 							currentTween = TweenService:Create(root, tInfo, {CFrame = CFrame.lookAt(targetPos, targetPos + flatForward)})
 							currentTween:Play()
+						
+						-- TRIGGER: The tween cleanly reached the end of its 40 studs!
+						elseif currentTween.PlaybackState == Enum.PlaybackState.Completed then
+							-- Null out the Tween permanently so we never infinitely fire off another one
+							currentTween = nil
+							stopMomentum(root)
+							toggleNoclip(false)
+							-- Move automatically to WAIT_CLOSE. (Fixes getting stuck on laggy gate-drop sounds)
+							roomState = "WAIT_CLOSE"
 						end
 					end
 
