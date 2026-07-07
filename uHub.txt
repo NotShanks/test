@@ -4323,15 +4323,27 @@ local function StartMasterAutoDungeon()
 						roomState = "WAIT_CLOSE"
 					else
 						if not currentTween or currentTween.PlaybackState ~= Enum.PlaybackState.Playing then
-							local furthestPart = getFurthestPart(currentRoom, root.Position)
-							local targetPos = furthestPart and furthestPart.Position or currentRoom:GetPivot().Position
-							
-							targetPos = Vector3.new(targetPos.X, currentRoom:GetPivot().Position.Y + 3, targetPos.Z)
-							
 							toggleNoclip(true)
+							
+							local targetPos = currentRoom:GetPivot().Position
+							if door then
+								-- Map the exact door side. Pushes character mathematically ~45 studs inwards into the room space completely avoiding wall decor debris!
+								local localPos = door.CFrame:PointToObjectSpace(root.Position)
+								if math.abs(localPos.Z) > math.abs(localPos.X) then
+									targetPos = (door.CFrame * CFrame.new(0, 0, -math.sign(localPos.Z) * 45)).Position
+								else
+									targetPos = (door.CFrame * CFrame.new(-math.sign(localPos.X) * 45, 0, 0)).Position
+								end
+							end
+							
+							-- Match current standing Altitude to perfectly stop glitch drops!
+							targetPos = Vector3.new(targetPos.X, root.Position.Y, targetPos.Z)
+							
 							local dist = (root.Position - targetPos).Magnitude
 							local tInfo = TweenInfo.new(dist / 70, Enum.EasingStyle.Linear)
-							currentTween = TweenService:Create(root, tInfo, {CFrame = CFrame.new(targetPos)})
+							
+							-- Force camera smoothing to follow target properly using lookAt instead of empty orientations
+							currentTween = TweenService:Create(root, tInfo, {CFrame = CFrame.lookAt(targetPos, targetPos + (targetPos - root.Position).Unit)})
 							currentTween:Play()
 						end
 					end
