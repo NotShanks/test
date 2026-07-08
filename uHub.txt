@@ -3071,8 +3071,15 @@ end)
 -- ==========================================
 -- SERVER CO-PRESENCE FAILSAFE
 -- ==========================================
+-- 1. Create the lock outside the function
+local isEvacuating = false
+
 local function executeFailsafeTeleport()
-	-- 1. Shut down combat loops immediately
+	-- 2. If we are already running the failsafe, stop here!
+	if isEvacuating then return end
+	isEvacuating = true
+
+	-- Shut down combat loops immediately
 	_G.AutoDungeon = false
 	_G.AutoAllMobsOverworld = false
 	_G.AutoAllMobs = false
@@ -3086,7 +3093,7 @@ local function executeFailsafeTeleport()
 	
 	updateUIRunsStatus("Failsafe: Other players detected!")
 	
-	-- 2. CRITICAL: Keep AutoKingsRuins TRUE so it resumes upon loading back into the Sea
+	-- Keep AutoKingsRuins TRUE so it resumes upon loading back into the Sea
 	_G.AutoKingsRuins = true
 	saveConfig()
 	
@@ -3094,7 +3101,7 @@ local function executeFailsafeTeleport()
 
 	updateUIRunsStatus("Failsafe: Evacuating to Sea...")
 	
-	-- 3. Instantly dial the Sea PlaceId. No physical movement required.
+	-- Instantly dial the Sea PlaceId. No physical movement required.
 	task.spawn(function()
 		local TeleportService = game:GetService("TeleportService")
 		local seaPlaceId = 11650685514
@@ -4779,152 +4786,152 @@ local function getLobbyPlayers()
 end
 
 local function runKingsRuinsObserver()
-	task.spawn(function()
-		while _G.AutoKingsRuins do
-			pcall(function()
-				if isInDungeon() then
-					-- If active dungeon clear is underway, skip status updates
-					if not _G.AutoDungeon then
-						updateUIRunsStatus("Dungeon active")
-					end
-					task.wait(2)
-					return
-				end
+    task.spawn(function()
+        while _G.AutoKingsRuins do
+            pcall(function()
+                if isInDungeon() then
+                    -- If active dungeon clear is underway, skip status updates
+                    if not _G.AutoDungeon then
+                        updateUIRunsStatus("Dungeon active")
+                    end
+                    task.wait(2)
+                    return
+                end
 
-				local seasonStatus, remainingTime = getSeasonTimeRemaining()
-				if seasonStatus == "Inactive" then
-					if remainingTime > 120 then
-						-- Grace period to allow client game values to synchronize on transition boundaries
-						updateUIRunsStatus("Season shifting? Verifying...")
-						task.wait(10)
-						
-						-- Re-verify season state after synchronization period
-						seasonStatus, remainingTime = getSeasonTimeRemaining()
-						if seasonStatus == "Inactive" and remainingTime > 120 then
-							updateUIRunsStatus("Wrong season | Server Hopping")
-							Luna:Notification({Title = "Auto Kings Ruins", Content = "Incorrect season. Hopping to target server Profile...", Icon = "autorenew"})
-							task.wait(2)
-							executeProjectedServerHop()
-							return
-						end
-					else
-						updateUIRunsStatus("Season starts in " .. math.floor(remainingTime) .. "s")
-						task.wait(1)
-						return
-					end
-				end
+                local seasonStatus, remainingTime = getSeasonTimeRemaining()
+                if seasonStatus == "Inactive" then
+                    if remainingTime > 120 then
+                        -- Grace period to allow client game values to synchronize on transition boundaries
+                        updateUIRunsStatus("Season shifting? Verifying...")
+                        task.wait(10)
+                        
+                        -- Re-verify season state after synchronization period
+                        seasonStatus, remainingTime = getSeasonTimeRemaining()
+                        if seasonStatus == "Inactive" and remainingTime > 120 then
+                            updateUIRunsStatus("Wrong season | Server Hopping")
+                            Luna:Notification({Title = "Auto Kings Ruins", Content = "Incorrect season. Hopping to target server Profile...", Icon = "autorenew"})
+                            task.wait(2)
+                            executeProjectedServerHop()
+                            return
+                        end
+                    else
+                        updateUIRunsStatus("Season starts in " .. math.floor(remainingTime) .. "s")
+                        task.wait(1)
+                        return
+                    end
+                end
 
-				local teleportModel = workspace:FindFirstChild("KingsRuinsTeleport")
-				if not teleportModel then
-					updateUIRunsStatus("Teleporter model missing")
-					task.wait(1)
-					return
-				end
+                local teleportModel = workspace:FindFirstChild("KingsRuinsTeleport")
+                if not teleportModel then
+                    updateUIRunsStatus("Teleporter model missing")
+                    task.wait(1)
+                    return
+                end
 
-				local centerPos = teleportModel:GetPivot().Position
-				
-				-- Scan the Lobby First
-				local lobbyPlayers = getLobbyPlayers()
-				local amInLobby = table.find(lobbyPlayers, Player.Name) ~= nil
-				local areOthersInLobby = false
-				
-				for _, name in ipairs(lobbyPlayers) do
-					if name ~= Player.Name then
-						if not isPlayerAuthorized(name) then
-							areOthersInLobby = true
-						end
-					end
-				end
+                local centerPos = teleportModel:GetPivot().Position
+                
+                -- Scan the Lobby First
+                local lobbyPlayers = getLobbyPlayers()
+                local amInLobby = table.find(lobbyPlayers, Player.Name) ~= nil
+                local areOthersInLobby = false
+                
+                for _, name in ipairs(lobbyPlayers) do
+                    if name ~= Player.Name then
+                        if not isPlayerAuthorized(name) then
+                            areOthersInLobby = true
+                        end
+                    end
+                end
 
-				-- Threat Detection Layer Tracking
-				local playerInZone1 = false
-				local playerInZone2 = false
-				local playerInZone3 = false
+                -- NEW: Single strict 320-stud threat tracking
+                local hostileInZone = false
 
-				for _, otherPlayer in pairs(Players:GetPlayers()) do
-					if otherPlayer ~= Player and otherPlayer.Character and otherPlayer.Character:FindFirstChild("HumanoidRootPart") then
-						local otherHRP = otherPlayer.Character.HumanoidRootPart
-						local distance = (otherHRP.Position - centerPos).Magnitude
-						
-						if isPlayerAuthorized(otherPlayer.Name) then
-							-- ALTS TIE-BREAKER LOGIC:
-							-- Only yield if the other alt is in the queue AND has a lower UserID.
-							if table.find(lobbyPlayers, otherPlayer.Name) then
-								if otherPlayer.UserId < Player.UserId then
-									playerInZone1 = true
-									playerInZone2 = true
-								end
-							end
-						else
-							-- Random Stranger Threat Tracking
-							if distance <= 75 then playerInZone1 = true end  -- Danger Close
-							if distance <= 180 then playerInZone2 = true end -- Line of Sight
-							if distance <= 350 then playerInZone3 = true end -- Local Radar
-						end
-					end
-				end
+                for _, otherPlayer in pairs(Players:GetPlayers()) do
+                    if otherPlayer ~= Player and otherPlayer.Character and otherPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                        local otherHRP = otherPlayer.Character.HumanoidRootPart
+                        local distance = (otherHRP.Position - centerPos).Magnitude
+                        
+                        if isPlayerAuthorized(otherPlayer.Name) then
+                            -- ALTS TIE-BREAKER LOGIC:
+                            -- Only yield if the other alt is in the queue AND has a lower UserID.
+                            if table.find(lobbyPlayers, otherPlayer.Name) then
+                                if otherPlayer.UserId < Player.UserId then
+                                    hostileInZone = true
+                                end
+                            end
+                        else
+                            -- Random Stranger Threat Tracking: If ANYONE is within 320 studs, flag as hostile.
+                            if distance <= 320 then 
+                                hostileInZone = true 
+                            end
+                        end
+                    end
+                end
 
-				local startsInText = ""
-				local startsInObj = teleportModel:FindFirstChild("RaidPlayers") 
-					and teleportModel.RaidPlayers:FindFirstChild("SurfaceGui") 
-					and teleportModel.RaidPlayers.SurfaceGui:FindFirstChild("StartsIn")
-				if startsInObj then
-					startsInText = startsInObj.Text
-				end
+                local startsInText = ""
+                local startsInObj = teleportModel:FindFirstChild("RaidPlayers") 
+                    and teleportModel.RaidPlayers:FindFirstChild("SurfaceGui") 
+                    and teleportModel.RaidPlayers.SurfaceGui:FindFirstChild("StartsIn")
+                if startsInObj then
+                    startsInText = startsInObj.Text
+                end
 
-				local parsedSeconds = tonumber(string.match(startsInText, "%d+")) or 999
-				local lobbyTimerActive = startsInText ~= "" and startsInText ~= "TELEPORTING PARTY"
+                local parsedSeconds = tonumber(string.match(startsInText, "%d+")) or 999
+                local lobbyTimerActive = startsInText ~= "" and startsInText ~= "TELEPORTING PARTY"
 
-				local function forceEvacuate()
-					executeKingsRuinsLeave()
-				end
+                local function forceEvacuate()
+                    -- Attempt 1: Fire the leave trigger safely
+                    executeKingsRuinsLeave()
+                    
+                    -- Wait 0.5 seconds to let the server process the touch and update the UI
+                    task.wait(0.5)
+                    
+                    -- Attempt 2 (Safety Net): Check if we are still on the board. 
+                    -- If the server lagged and missed the first one, try exactly one more time.
+                    if table.find(getLobbyPlayers(), Player.Name) then
+                        executeKingsRuinsLeave()
+                    end
+                end
 
-				if amInLobby then
-					if areOthersInLobby then
-						updateUIRunsStatus("Strangers inside lobby | Evacuating")
-						forceEvacuate()
-						Luna:Notification({Title = "Kings Ruins Alarm", Content = "Stranger joined your lobby! Evacuating...", Icon = "warning"})
-						task.wait(2)
-						return
-					end
+                if amInLobby then
+                    if areOthersInLobby then
+                        updateUIRunsStatus("Strangers inside lobby | Evacuating")
+                        forceEvacuate()
+                        Luna:Notification({Title = "Kings Ruins Alarm", Content = "Stranger joined your lobby! Evacuating...", Icon = "warning"})
+                        task.wait(2)
+                        return
+                    end
 
-					-- Evaluative Retreat Logics based on Countdown Risk vs Position
-					if playerInZone1 then
-						if not lobbyTimerActive or parsedSeconds > 2 then
-							updateUIRunsStatus("Player/Alt in CORE ZONE! | Evacuating")
-							forceEvacuate()
-							Luna:Notification({Title = "Kings Ruins Alarm", Content = "Entity dangerously close! Evacuating...", Icon = "warning"})
-							task.wait(2)
-							return
-						end
-					elseif playerInZone2 then
-						if not lobbyTimerActive or parsedSeconds > 15 then
-							updateUIRunsStatus("Player/Alt approaching Mid | Evacuating")
-							forceEvacuate()
-							Luna:Notification({Title = "Kings Ruins Alarm", Content = "Entity approaching entrance. Evacuating...", Icon = "warning"})
-							task.wait(2)
-							return
-						end
-					end
-					
-					updateUIRunsStatus("Waiting for start (" .. startsInText .. ")")
-				else
-					-- We are NOT inside the lobby yet
-					if playerInZone2 then 
-						updateUIRunsStatus("Sector blocked by player/alt | Waiting hidden")
-					else
-						if startsInText == "TELEPORTING PARTY" then
-							updateUIRunsStatus("Waiting for portal status to clear")
-						else
-							updateUIRunsStatus("Entering Lobby (Coast clear)")
-							executeKingsRuinsEntrance()
-						end
-					end
-				end
-			end)
-			task.wait(0.2)
-		end
-	end)
+                    -- Evaluative Retreat Logic
+                    if hostileInZone then
+                        -- Bail instantly unless the timer is literally at 2, 1, or 0.
+                        if not lobbyTimerActive or parsedSeconds > 2 then
+                            updateUIRunsStatus("Entity in 320-stud perimeter! | Evacuating")
+                            forceEvacuate()
+                            Luna:Notification({Title = "Kings Ruins Alarm", Content = "Entity breached 320-stud perimeter. Evacuating...", Icon = "warning"})
+                            task.wait(2)
+                            return
+                        end
+                    end
+                    
+                    updateUIRunsStatus("Waiting for start (" .. startsInText .. ")")
+                else
+                    -- We are NOT inside the lobby yet
+                    if hostileInZone then 
+                        updateUIRunsStatus("Sector blocked (320-stud radar) | Waiting hidden")
+                    else
+                        if startsInText == "TELEPORTING PARTY" then
+                            updateUIRunsStatus("Waiting for portal status to clear")
+                        else
+                            updateUIRunsStatus("Entering Lobby (Coast clear)")
+                            executeKingsRuinsEntrance()
+                        end
+                    end
+                end
+            end)
+            task.wait(0.2)
+        end
+    end)
 end
 
 -- ==========================================
