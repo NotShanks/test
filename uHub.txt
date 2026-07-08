@@ -487,11 +487,14 @@ local function sendWebhookNotification(statusState, statusMessage)
 				failsafeStr = "🔴 Offline"
 			end
 
+			-- Format standard 12-hour clock time (e.g., 8:49:15 AM) and strip any leading zero
+			local standardTimeStr = string.gsub(os.date("%I:%M:%S %p"), "^0", "")
+
 			local payload = {
 				username = Player.Name .. " Analytics",
-				avatar_url = "https://i.imgur.com/wSTFk6E.png",
+				avatar_url = "https://i.imgur.com/oxwEjIM.jpeg",
 				embeds = {{
-					["title"] = "Utility Hub - Real-Time Dashboard",
+					["title"] = "Legends:RE Real-Time Dashboard",
 					["color"] = embedColor,
 					["description"] = "**Current Activity:**\n`" .. (statusMessage ~= "" and statusMessage or "N/A") .. "`",
 					["fields"] = {
@@ -505,9 +508,9 @@ local function sendWebhookNotification(statusState, statusMessage)
 						
 						{["name"] = "🛡️ Last Resort Usage", ["value"] = "**" .. tostring(_G.LastResortCount) .. " times**", ["inline"] = true},
 						{["name"] = "🛡️ Failsafe Status", ["value"] = "**" .. failsafeStr .. "**", ["inline"] = true},
-						{["name"] = "\u{200B}", ["value"] = "\u{200B}", ["inline"] = true}
+						{["name"] = "⏳ Started", ["value"] = "<t:" .. tostring(_G.StartupTime) .. ":t>", ["inline"] = true}
 					},
-					["footer"] = { ["text"] = "System Time: " .. os.date("%X") }
+					["footer"] = { ["text"] = "System Time: " .. standardTimeStr }
 				}}
 			}
 			
@@ -3069,41 +3072,43 @@ end)
 -- SERVER CO-PRESENCE FAILSAFE
 -- ==========================================
 local function executeFailsafeTeleport()
+	-- 1. Shut down combat loops immediately
 	_G.AutoDungeon = false
-	_G.AutoKingsRuins = false
+	_G.AutoAllMobsOverworld = false
+	_G.AutoAllMobs = false
 	_G.SlingshotStatue = false
 	_G.SlingshotElven = false
 	_G.SlingshotMimic = false
-	_G.AutoAllMobsOverworld = false
-	_G.AutoAllMobs = false
 
 	CancelSmoothTween()
 	toggleNoclip(false)
 	resetWalkSpeed()
 	
 	updateUIRunsStatus("Failsafe: Other players detected!")
-	sendWebhookNotification("Failsafe activated: another player detected in server.")
+	
+	-- 2. CRITICAL: Keep AutoKingsRuins TRUE so it resumes upon loading back into the Sea
+	_G.AutoKingsRuins = true
+	saveConfig()
+	
+	sendWebhookNotification("FAILSAFE", "Another player detected inside dungeon instance! Initiating emergency evacuation to Sea.")
 
-	pcall(function()
-		local char = Player.Character
-		local hrp = char and char:FindFirstChild("HumanoidRootPart")
-		if hrp then
-			if _G.SavedOriginalPosition then
-				hrp.CFrame = _G.SavedOriginalPosition
-			else
-				local spFolder = workspace:FindFirstChild("SpawnPoints")
-				local fallbackSpawn = spFolder and spFolder:FindFirstChildWhichIsA("BasePart")
-				if fallbackSpawn then
-					hrp.CFrame = fallbackSpawn.CFrame + Vector3.new(0, 5, 0)
-				end
-			end
-			stopMomentum(hrp)
-		end
+	updateUIRunsStatus("Failsafe: Evacuating to Sea...")
+	
+	-- 3. Instantly dial the Sea PlaceId. No physical movement required.
+	task.spawn(function()
+		local TeleportService = game:GetService("TeleportService")
+		local seaPlaceId = 11650685514
+		
+		pcall(function()
+			TeleportService:Teleport(seaPlaceId, Player)
+		end)
+		
+		-- Redundancy check if Roblox rate-limits the first request
+		task.wait(8)
+		pcall(function()
+			TeleportService:Teleport(seaPlaceId, Player)
+		end)
 	end)
-
-	task.wait(1.5)
-	updateUIRunsStatus("Failsafe: Server hopping...")
-	executeProjectedServerHop()
 end
 
 task.spawn(function()
@@ -5900,27 +5905,55 @@ local webhookInput = secWebhook:CreateInput({
 -- Update textbox visual state with the stored value on launch
 webhookInput:Set({ CurrentValue = _G.DiscordWebhookURL })
 
--- Insert under your existing webhook integration setup box (Around Line 2955)
 secWebhook:CreateButton({
 	Name = "Reset Activity Data",
 	Description = "Wipes runtime cache calculations & enforces a fresh embed generation.",
 	Callback = function()
-		-- Restore trackers to 0 and establish baseline at that exact execution time.
+		-- Try to delete the old Discord message if it's still tracked on screen
+		if _G.DiscordWebhookURL and _G.DiscordWebhookURL ~= "" and _G.DiscordMessageId and _G.DiscordMessageId ~= "" then
+			pcall(function()
+				local httprequest = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
+				if httprequest then
+					local cleanUrl = string.gsub(_G.DiscordWebhookURL, "%s+", "") 
+					local baseUrl = string.match(cleanUrl, "^([^?]+)")
+					
+					-- Asynchronously dispatch a DELETE request to clear the old layout
+					httprequest({ 
+						Url = baseUrl .. "/messages/" .. tostring(_G.DiscordMessageId), 
+						Method = "DELETE", 
+						Headers = { 
+							["Content-Type"] = "application/json",
+							["User-Agent"] = "UtilityHub/Client.Network" 
+						}
+					})
+				end
+			 pcall(function() end)
+			end)
+		end
+
+		-- Reset persistent uptime values
 		_G.StartupTime = os.time()
+		_G.KingsRuinsCompletedCount = 0
 		
+		-- Reset gold session trackers
 		local currentGold = 0
 		if Player:FindFirstChild("Data") and Player.Data:FindFirstChild("Gold") then
 			currentGold = Player.Data.Gold.Value
 		end
-		
 		_G.InitialGold = currentGold
 		_G.HighestGoldPerMin = 0
 		_G.LastResortCount = 0
 		
-		_G.DiscordMessageId = nil -- Delete payload tracking so a completely NEW dashboard message appears!
+		-- Destroy pointer reference so a brand-new message card prints on next update
+		_G.DiscordMessageId = nil 
 		
 		saveConfig()
-		Luna:Notification({Title = "Activity Cache Erased", Content = "Stats safely initialized from origin. Submitting active parameters now...", Icon = "autorenew"})
+		
+		Luna:Notification({
+			Title = "Activity Cache Erased", 
+			Content = "Old post deleted. Analytics have been fully cleared back to zero!", 
+			Icon = "autorenew"
+		})
 		
 		sendWebhookNotification("REBOOT", "Runtime analytics data strictly refreshed back to starting points natively.")
 	end
@@ -6011,7 +6044,9 @@ end
 
 -- Post-Load Initialization Sequences
 task.spawn(function()
-	task.wait(1.5)
+	-- Wait 5 seconds upfront to allow the local player and environment to load
+	task.wait(3) 
+	
 	if isInDungeon() then
 		if _G.AutoKingsRuins then
 			updateUIRunsStatus("Waiting for Map Load...")
@@ -6024,7 +6059,29 @@ task.spawn(function()
 				end
 			end
 			
-			updateUIRunsStatus("Map verified. Loading assets (3s delay)...")
+			updateUIRunsStatus("Map verified. Checking for strangers...")
+			task.wait(2) -- Extra buffer to ensure other players are fully replicated in the server list
+			
+			-- Perform the immediate failsafe check BEFORE starting the dungeon
+			local unauthorizedPlayerFound = false
+			for _, player in ipairs(game:GetService("Players"):GetPlayers()) do
+				if not isPlayerAuthorized(player.Name) then
+					unauthorizedPlayerFound = true
+					break
+				end
+			end
+			
+			if unauthorizedPlayerFound then
+				Luna:Notification({
+					Title = "Failsafe Triggered",
+					Content = "Stranger detected on load! Evacuating immediately...",
+					Icon = "warning"
+				})
+				executeFailsafeTeleport()
+				return -- Completely halt the startup sequence so the dungeon NEVER starts!
+			end
+			
+			updateUIRunsStatus("Coast clear. Loading assets (3s delay)...")
 			task.wait(3)
 			
 			_G.AutoDungeon = true
