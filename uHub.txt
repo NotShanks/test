@@ -3,6 +3,10 @@
 	Optimized for Advanced Combat Farms and Master Dungeon Automation
 --]]
 
+repeat task.wait() until game:IsLoaded()
+
+task.wait(5)
+
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
@@ -559,7 +563,7 @@ local function sendWebhookNotification(statusState, statusMessage)
 end
 
 -- ==========================================
--- SEASON CACHE & SMART PROJECTED SERVER HOP
+-- SEASON CACHE & SMART PROJECTED SERVER HOP (FIXED ROUTING & SORTING)
 -- ==========================================
 _G.FailedCachedJobs = _G.FailedCachedJobs or {}
 _G.ConsecutiveHopAttempts = _G.ConsecutiveHopAttempts or 0
@@ -567,7 +571,6 @@ _G.LastTargetedJobId = nil
 
 local TeleportService = game:GetService("TeleportService")
 
--- 1. Catch backend Roblox connection errors to prevent endless "Server Full" loops
 if _G.TeleportFailConnection then
 	_G.TeleportFailConnection:Disconnect()
 	_G.TeleportFailConnection = nil
@@ -591,12 +594,14 @@ _G.TeleportFailConnection = TeleportService.TeleportInitFailed:Connect(function(
 		_G.LastTargetedJobId = nil
 	end
 
-	if updateUIRunsStatus then updateUIRunsStatus("Roblox Teleport Rejected. Recovering...") end
+	if updateUIRunsStatus then updateUIRunsStatus("Target full/failed. Selecting next best cache...") end
 	
-	isHoppingCurrently = false -- Unlock hopping thread instantly so it isn't paralyzed
+	isHoppingCurrently = false
 	
-	task.delay(1.5, function()
-		pcall(doServerHop) -- Only force a safe public server bypass after an API hang!
+	-- FIXED: When a target fails, we do NOT skip to random servers immediately. 
+    -- We re-run executeProjectedServerHop which skips the blacklisted server and attempts the 2nd best choice!
+	task.delay(3, function() 
+		pcall(executeProjectedServerHop)
 	end)
 end)
 
@@ -625,10 +630,10 @@ local function updateCurrentServerCache()
 			cache[game.JobId] = {
 				day = currentDay,
 				gameMins = gameMins,
-				realTime = os.time()
+				realTime = os.time(),
+				players = #Players:GetPlayers() -- Record current player count
 			}
 			
-			-- Evict cache listings older than 12 hours
 			local now = os.time()
 			for job, data in pairs(cache) do
 				if now - data.realTime > 43200 then
@@ -644,28 +649,25 @@ local function updateCurrentServerCache()
 	end
 end
 
--- Start a background profile updater for the current node
 task.spawn(function()
 	while task.wait(10) do
 		pcall(updateCurrentServerCache)
 	end
 end)
 
+-- FIXED CACHE CALCULATION AND SERVER GRADING LOGIC
 local function getTargetServerFromCache()
 	if not isfile or not isfile(cacheFileName) then return nil end
 	
 	local cache = {}
-	pcall(function()
-		cache = HttpService:JSONDecode(readfile(cacheFileName))
-	end)
+	pcall(function() cache = HttpService:JSONDecode(readfile(cacheFileName)) end)
 	
 	local now = os.time()
-	local bestJobId = nil
-	local bestTimeRemaining = 9999
+	local validTargets = {}
 	
 	for jobId, data in pairs(cache) do
-		-- Exclude the current server AND globally blacklisted/failed servers
 		if jobId ~= game.JobId and not _G.FailedCachedJobs[jobId] then
+            -- Projects REAL world time accurately based on observation footprint
 			local elapsedRealSeconds = now - data.realTime
 			local elapsedGameMins = (elapsedRealSeconds / REAL_SECONDS_PER_DAY) * IN_GAME_MINUTES_PER_DAY
 			local projectedTotalMins = data.gameMins + elapsedGameMins
@@ -674,36 +676,77 @@ local function getTargetServerFromCache()
 			local finalProjectedDay = data.day + totalGameDaysElapsed
 			local currentMinsInDay = projectedTotalMins % IN_GAME_MINUTES_PER_DAY
 			
+			-- 1. Discard and clean up if the server is Day 120 or older
+			if finalProjectedDay >= 120 then
+				cache[jobId] = nil
+				pcall(function()
+					writefile(cacheFileName, HttpService:JSONEncode(cache))
+				end)
+				continue
+			end
+
+			-- 2. Discard if on Day 119 with less than 2 minutes (120 real seconds) left in the day
+			if finalProjectedDay == 119 then
+				local gameMinsRemainingToday = IN_GAME_MINUTES_PER_DAY - currentMinsInDay
+				local realSecondsLeftToday = gameMinsRemainingToday * REAL_SECONDS_PER_GAME_MIN
+				if realSecondsLeftToday <= 120 then
+					continue
+				end
+			end
+			
 			local remainder = finalProjectedDay % 8
 			if remainder == 0 then remainder = 8 end
 			
 			local isFallOrSpring = (remainder == 3 or remainder == 4 or remainder == 7 or remainder == 8)
 			
 			local daysDifference = 0
-			if remainder == 1 or remainder == 2 then
-				daysDifference = 3 - remainder
-			elseif remainder == 5 or remainder == 6 then
-				daysDifference = 7 - remainder
-			elseif remainder == 3 or remainder == 4 then
-				daysDifference = 5 - remainder
-			elseif remainder == 7 or remainder == 8 then
-				daysDifference = 9 - remainder
-			end
+			if remainder == 1 or remainder == 2 then daysDifference = 3 - remainder
+			elseif remainder == 5 or remainder == 6 then daysDifference = 7 - remainder
+			elseif remainder == 3 or remainder == 4 then daysDifference = 5 - remainder
+			elseif remainder == 7 or remainder == 8 then daysDifference = 9 - remainder end
 			
 			local gameMinsRemainingToday = IN_GAME_MINUTES_PER_DAY - currentMinsInDay
 			local totalGameMinsLeft = gameMinsRemainingToday + ((daysDifference - 1) * IN_GAME_MINUTES_PER_DAY)
 			local realSecondsLeft = totalGameMinsLeft * REAL_SECONDS_PER_GAME_MIN
 			
+			-- Captures only fully Active phases OR pending shifts <= 2 mins away
 			if isFallOrSpring or realSecondsLeft <= 120 then
-				if realSecondsLeft < bestTimeRemaining then
-					bestTimeRemaining = realSecondsLeft
-					bestJobId = jobId
-				end
+				table.insert(validTargets, {
+					jobId = jobId,
+					active = isFallOrSpring,
+					timeLeft = realSecondsLeft,
+					players = data.players or 1 -- Retrieve recorded player count
+				})
 			end
 		end
 	end
 	
-	return bestJobId
+	table.sort(validTargets, function(a, b)
+		local aGoodActive = a.active and a.timeLeft > 60
+		local bGoodActive = b.active and b.timeLeft > 60
+
+		if aGoodActive and bGoodActive then
+			-- Prioritize servers with fewer players first to avoid failsafe triggers.
+			-- If player counts are similar (within 2 players), sort by longest time left.
+			if math.abs(a.players - b.players) > 2 then
+				return a.players < b.players
+			else
+				return a.timeLeft > b.timeLeft
+			end
+		elseif aGoodActive and not bGoodActive then
+			return true 
+		elseif not aGoodActive and bGoodActive then
+			return false 
+		else
+			return a.timeLeft < b.timeLeft
+		end
+	end)
+	
+	if #validTargets > 0 then
+		return validTargets[1].jobId 
+	end
+	
+	return nil
 end
 
 local function doServerHop()
@@ -4098,6 +4141,48 @@ local function isDungeonClear()
 	return (activeMobs == 0 and activeChests == 0)
 end
 
+local isExitingDungeon = false -- Single-execution safety lock
+
+local function exitDungeonFlow()
+	-- Prevent double-counting, double-webhooks, and double-teleports
+	if isExitingDungeon then return end
+	isExitingDungeon = true
+	
+	-- Increment stats and dispatch webhook exactly once
+	_G.KingsRuinsCompletedCount = _G.KingsRuinsCompletedCount + 1
+	saveConfig()
+	sendWebhookNotification("Kings Ruins Dungeon Completed Successfully!")
+	
+	updateUIRunsStatus("Looting completed. Routing exit...")
+	
+	local targetCachedJob = getTargetServerFromCache()
+	if targetCachedJob and _G.AutoKingsRuins then
+		updateUIRunsStatus("Direct cache route found! Teleporting...")
+		_G.AutoDungeon = false
+		toggleNoclip(false)
+		resetWalkSpeed()
+		
+		isHoppingCurrently = true
+		_G.LastTargetedJobId = targetCachedJob
+		pcall(function()
+			-- Teleport directly to the cached Sea lobby place instance (11650685514)
+			TeleportService:TeleportToPlaceInstance(11650685514, targetCachedJob, Player)
+		end)
+		
+		-- Fallback safety net in case Roblox blocks the teleportation sequence
+		task.delay(10, function()
+			if isInsideKingsRuinsDungeon() then
+				isHoppingCurrently = false
+				isExitingDungeon = false -- Reset lock if teleport failed
+				teleportToExitGate()
+			end
+		end)
+	else
+		updateUIRunsStatus("No cached targets. Leaving normally...")
+		teleportToExitGate()
+	end
+end
+
 local function startExitCheckWatcher()
 	task.spawn(function()
 		while _G.AutoDungeon do
@@ -4115,10 +4200,7 @@ local function startExitCheckWatcher()
 						local doorOpened = prompt and not prompt.Enabled
 						
 						if doorOpened and isDungeonClear() then
-							_G.KingsRuinsCompletedCount = _G.KingsRuinsCompletedCount + 1
-							saveConfig()
-							sendWebhookNotification("Kings Ruins Dungeon Completed Successfully!")
-							teleportToExitGate()
+							exitDungeonFlow()
 							break
 						end
 					end
@@ -4131,6 +4213,7 @@ end
 
 local function StartMasterAutoDungeon()
 	task.spawn(function()
+		isExitingDungeon = false -- Reset the execution lock for this new run
 		local state = "EVALUATE"
 		local currentRoom = nil
 		local roomState = "INIT"
@@ -4140,6 +4223,15 @@ local function StartMasterAutoDungeon()
 		local currentTween = nil
 		local lastTrapClear = 0
 		local spawnTimer = 0
+		
+		-- Target physical door caches
+		local cachedDoor1Pos = nil
+		local cachedDoor2Pos = nil
+		local door1Instance = nil
+		local door2Instance = nil
+		local lastDoor1Pos = nil
+		local lastDoor2Pos = nil
+		local doorStagnantTime = 0
 
 		startExitCheckWatcher()
 
@@ -4276,6 +4368,18 @@ local function StartMasterAutoDungeon()
 				end
 
 				if roomState == "INIT" then
+					-- Cache the physical closed state before interaction
+					if doorsModel then
+						door1Instance = doorsModel:FindFirstChild("Door1")
+						door2Instance = doorsModel:FindFirstChild("Door2")
+						cachedDoor1Pos = door1Instance and door1Instance.Position or nil
+						cachedDoor2Pos = door2Instance and door2Instance.Position or nil
+					else
+						door1Instance, door2Instance, cachedDoor1Pos, cachedDoor2Pos = nil, nil, nil, nil
+					end
+					lastDoor1Pos, lastDoor2Pos = nil, nil
+					doorStagnantTime = 0
+
 					updateUIRunsStatus("Transitioning to next gate...")
 					toggleNoclip(true) -- Keep noclip on to avoid physics glitched flings
 					
@@ -4366,10 +4470,57 @@ local function StartMasterAutoDungeon()
 
 				elseif roomState == "WAIT_CLOSE" then
 					updateUIRunsStatus("Waiting for entry gate to lock...")
+					
+					local isClosed = false
+					local soundCheck = false
+					
+					-- Fallback check: Read audio or model components
 					local closeSound = currentRoom:FindFirstChild("Doors") and currentRoom.Doors:FindFirstChild("WallBlock") and currentRoom.Doors.WallBlock:FindFirstChild("Close")
 					if closeSound and not closeSound.Playing then
-						roomState = "COMBAT"
+						soundCheck = true
 					elseif not closeSound then
+						soundCheck = true
+					end
+
+					if door1Instance and door2Instance and cachedDoor1Pos and cachedDoor2Pos then
+						local currentPos1 = door1Instance.Position
+						local currentPos2 = door2Instance.Position
+
+						-- Compare coordinates to cached closed points
+						local distToClosed1 = (currentPos1 - cachedDoor1Pos).Magnitude
+						local distToClosed2 = (currentPos2 - cachedDoor2Pos).Magnitude
+
+						if distToClosed1 < 0.1 and distToClosed2 < 0.1 then
+							isClosed = true
+						else
+							-- Active velocity check
+							if lastDoor1Pos and lastDoor2Pos then
+								local movement1 = (currentPos1 - lastDoor1Pos).Magnitude
+								local movement2 = (currentPos2 - lastDoor2Pos).Magnitude
+
+								if movement1 < 0.01 and movement2 < 0.01 then
+									doorStagnantTime = doorStagnantTime + 0.1
+								else
+									doorStagnantTime = 0
+								end
+							end
+
+							lastDoor1Pos = currentPos1
+							lastDoor2Pos = currentPos2
+
+							-- Move forward if stagnant or sound feedback confirms closed
+							if doorStagnantTime >= 4.0 or soundCheck then
+								isClosed = true
+							end
+						end
+					else
+						isClosed = soundCheck
+					end
+
+					if isClosed then
+						lastDoor1Pos = nil
+						lastDoor2Pos = nil
+						doorStagnantTime = 0
 						roomState = "COMBAT"
 					end
 
@@ -4634,12 +4785,7 @@ local function StartMasterAutoDungeon()
 				end
 
 				-- Loot and boss variables are completely cleared; initiate natural dungeon exit phase
-				updateUIRunsStatus("Looting completed. Leaving dungeon...")
-				_G.KingsRuinsCompletedCount = _G.KingsRuinsCompletedCount + 1
-				saveConfig()
-				sendWebhookNotification("Kings Ruins Dungeon Completed Successfully!")
-				
-				teleportToExitGate()
+				exitDungeonFlow()
 				task.wait(3.0) 
 
 				_G.AutoDungeon = false
@@ -5918,23 +6064,26 @@ secWebhook:CreateButton({
 	Callback = function()
 		-- Try to delete the old Discord message if it's still tracked on screen
 		if _G.DiscordWebhookURL and _G.DiscordWebhookURL ~= "" and _G.DiscordMessageId and _G.DiscordMessageId ~= "" then
-			pcall(function()
-				local httprequest = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
-				if httprequest then
-					local cleanUrl = string.gsub(_G.DiscordWebhookURL, "%s+", "") 
-					local baseUrl = string.match(cleanUrl, "^([^?]+)")
-					
-					-- Asynchronously dispatch a DELETE request to clear the old layout
-					httprequest({ 
-						Url = baseUrl .. "/messages/" .. tostring(_G.DiscordMessageId), 
-						Method = "DELETE", 
-						Headers = { 
-							["Content-Type"] = "application/json",
-							["User-Agent"] = "UtilityHub/Client.Network" 
-						}
-					})
-				end
-			 pcall(function() end)
+			-- Wrap in task.spawn so the HTTP request doesn't freeze the UI
+			task.spawn(function()
+				pcall(function()
+					local httprequest = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
+					if httprequest then
+						local cleanUrl = string.gsub(_G.DiscordWebhookURL, "%s+", "") 
+						local baseUrl = string.match(cleanUrl, "^([^?]+)")
+						
+						-- Asynchronously dispatch a DELETE request
+						httprequest({ 
+							Url = baseUrl .. "/messages/" .. tostring(_G.DiscordMessageId), 
+							Method = "DELETE", 
+							-- REMOVED "Content-Type" because DELETE requests have no body. 
+							-- Leaving it in causes executors/Discord to throw a 400 Bad Request.
+							Headers = { 
+								["User-Agent"] = "UtilityHub/Client.Network" 
+							}
+						})
+					end
+				end)
 			end)
 		end
 
